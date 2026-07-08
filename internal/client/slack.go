@@ -22,6 +22,7 @@ const (
 	channelListPageSize     = 200
 )
 
+// Sort values accepted by list_slack_channels' sort option.
 const (
 	ChannelSortNone        = "none"
 	ChannelSortNameAsc     = "name_asc"
@@ -396,7 +397,7 @@ func normalizeChannelTypes(types []string) ([]string, error) {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(types))
 	for _, rawType := range types {
-		for _, part := range strings.Split(rawType, ",") {
+		for part := range strings.SplitSeq(rawType, ",") {
 			channelType := strings.ToLower(strings.TrimSpace(part))
 			if channelType == "" {
 				continue

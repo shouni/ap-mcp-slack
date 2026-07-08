@@ -1,5 +1,10 @@
 # AP MCP Slack
 
+[![CI](https://github.com/shouni/ap-mcp-slack/actions/workflows/ci.yml/badge.svg)](https://github.com/shouni/ap-mcp-slack/actions/workflows/ci.yml)
+[![Language](https://img.shields.io/badge/Language-Go-blue)](https://golang.org/)
+[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/shouni/ap-mcp-slack)](https://github.com/shouni/ap-mcp-slack/tags)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Slack Incoming Webhook と Slack Web API で投稿・削除するための MCP サーバーです。
 
 Codex などの MCP クライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
@@ -58,24 +63,54 @@ Codex などの MCP クライアントからコマンドとして起動され、
 
 Slack API の `conversations.list` には並び順を指定する引数がないため、`sort` は MCP サーバーが取得した結果にローカルで適用します。
 
+## プロジェクトレイアウト (Project Layout)
+
+```text
+ap-mcp-slack/
+├── main.go              # エントリーポイント
+└── internal/
+    ├── config/          # 環境変数ロード
+    ├── app/             # DI コンテナ（SlackClient・設定の集約）
+    ├── builder/         # コンテナから Server を組み立てる DI
+    ├── client/          # Slack Incoming Webhook / Web API クライアント
+    │   └── slack.go     # webhookTransport（Webhook投稿） / webAPITransport（Web API）
+    ├── tools/           # MCP ツール定義
+    │   └── slack.go     # 4ツールの入出力定義とハンドラ
+    └── server/          # MCP stdio サーバー
+```
+
 ## ビルド
 
 ```bash
 go build -o ./bin/ap-mcp-slack .
 ```
 
-## Codex への登録例
+## MCPクライアントへの登録例
+
+stdio transport に対応した MCP クライアントであれば、Codex 以外（Claude Code、Claude Desktop など）からも同じバイナリをそのまま起動できます。
+
+### Claude Code
+
+```bash
+claude mcp add ap-mcp-slack \
+  -e MCP_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/XXX/YYY/ZZZ \
+  -e MCP_SLACK_USER_TOKEN=xoxp-... \
+  -e MCP_SLACK_CHANNEL_ID=C0123456789 \
+  -- /path/to/ap-mcp-slack/bin/ap-mcp-slack
+```
+
+### Codex
 
 `~/.codex/config.toml` に登録します。
 
 ```toml
 [mcp_servers.ap-mcp-slack]
 command = "/path/to/ap-mcp-slack/bin/ap-mcp-slack"
-env = {
-  MCP_SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/XXX/YYY/ZZZ",
-  MCP_SLACK_USER_TOKEN = "xoxp-...",
-  MCP_SLACK_CHANNEL_ID = "C0123456789"
-}
+
+[mcp_servers.ap-mcp-slack.env]
+MCP_SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+MCP_SLACK_USER_TOKEN = "xoxp-..."
+MCP_SLACK_CHANNEL_ID = "C0123456789"
 ```
 
 開発中はビルドせずに `go run` で登録することもできます。
@@ -84,11 +119,11 @@ env = {
 [mcp_servers.ap-mcp-slack]
 command = "go"
 args = ["run", "/path/to/ap-mcp-slack"]
-env = {
-  MCP_SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/XXX/YYY/ZZZ",
-  MCP_SLACK_USER_TOKEN = "xoxp-...",
-  MCP_SLACK_CHANNEL_ID = "C0123456789"
-}
+
+[mcp_servers.ap-mcp-slack.env]
+MCP_SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/XXX/YYY/ZZZ"
+MCP_SLACK_USER_TOKEN = "xoxp-..."
+MCP_SLACK_CHANNEL_ID = "C0123456789"
 ```
 
 ## ローカル確認
@@ -114,11 +149,13 @@ go run .
 
 MCPサーバーの起動自体には Slack の環境変数は必須ではありません。未設定の機能を呼び出した場合は、各ツールが `webhook URL is required` や `token is required` を返します。
 
-## 開発
+## 主な依存関係 (Dependencies)
 
-```bash
-go test ./...
-```
+| パッケージ | 説明 |
+| --- | --- |
+| [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | MCP 公式 Go SDK（stdio トランスポート） |
+| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.delete / conversations.list） |
+| [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | Webhook投稿用のHTTPクライアント（リトライ制御・SSRF/DNS Rebinding対策） |
 
 ## ライセンス
 
