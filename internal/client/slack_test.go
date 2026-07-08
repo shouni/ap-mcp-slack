@@ -14,12 +14,19 @@ import (
 // go-http-kit's SSRF/DNS-rebinding validation, for tests that point webhookURL at a
 // loopback httptest server. This lives here rather than as a SlackClientConfig field
 // so production callers have no way to disable that validation.
+//
+// webAPITransport is initialized through the normal (empty-config) constructor
+// rather than left as a zero value: every webAPITransport method checks
+// requireToken() before touching slackAPIClient, so today a nil client field
+// wouldn't actually panic, but a real, well-formed value keeps that true even if a
+// future caller extends this helper to exercise Web API methods too.
 func newTestWebhookClient(webhookURL string) *SlackClient {
 	return &SlackClient{
 		webhookTransport: webhookTransport{
 			webhookURL:    webhookURL,
 			httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry(), httpkit.WithSkipNetworkValidation(true)),
 		},
+		webAPITransport: newWebAPITransport(SlackClientConfig{}),
 	}
 }
 

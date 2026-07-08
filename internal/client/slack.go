@@ -66,6 +66,12 @@ func NewSlackClientWithConfig(cfg SlackClientConfig) *SlackClient {
 // ----------------------------------------------------------------------
 
 // webhookTransport posts messages through Slack Incoming Webhooks.
+//
+// Response bodies are capped by go-http-kit itself at httpkit.MaxResponseBodySize
+// (25MB, unconditional, not caller-configurable in v1.6.0) rather than the tighter
+// 64KB this package enforced manually before adopting go-http-kit. A malicious or
+// misbehaving webhook endpoint can't force unbounded memory growth, only up to that
+// fixed ceiling; a real Slack incoming webhook only ever returns a few bytes.
 type webhookTransport struct {
 	webhookURL    string
 	httpKitClient *httpkit.Client
