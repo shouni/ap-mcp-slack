@@ -31,13 +31,13 @@ const (
 )
 
 // SlackClient posts and deletes Slack messages through incoming webhooks and Web API.
+// It composes a webhook transport (Message/PostMessage) and a token-authenticated Web
+// API transport (WebAPIMessage/PostWebAPIMessage/DeleteWebAPIMessage/ListChannels).
+// The two share no state, so they're kept as separate embedded types rather than one
+// struct with fields that are only meaningful to one side or the other.
 type SlackClient struct {
-	webhookURL       string
-	token            string
-	defaultChannelID string
-	httpClient       *http.Client
-	webAPIClient     *slackapi.Client
-	webhookClient    *httpkit.Client
+	webhookTransport
+	webAPITransport
 }
 
 // SlackClientConfig configures SlackClient.
@@ -59,28 +59,32 @@ func NewSlackClient(webhookURL string) *SlackClient {
 
 // NewSlackClientWithConfig creates a SlackClient with explicit configuration.
 func NewSlackClientWithConfig(cfg SlackClientConfig) *SlackClient {
-	httpClient := &http.Client{Timeout: requestTimeout}
-	slackOptions := []slackapi.Option{slackapi.OptionHTTPClient(httpClient)}
-	if apiBaseURL := normalizeSlackAPIBaseURL(cfg.APIBaseURL); apiBaseURL != "" {
-		slackOptions = append(slackOptions, slackapi.OptionAPIURL(apiBaseURL))
+	return &SlackClient{
+		webhookTransport: newWebhookTransport(cfg),
+		webAPITransport:  newWebAPITransport(cfg),
 	}
-	token := strings.TrimSpace(cfg.Token)
+}
 
+// ----------------------------------------------------------------------
+// Webhook transport
+// ----------------------------------------------------------------------
+
+// webhookTransport posts messages through Slack Incoming Webhooks.
+type webhookTransport struct {
+	webhookURL string
+	client     *httpkit.Client
+}
+
+func newWebhookTransport(cfg SlackClientConfig) webhookTransport {
 	// Webhook posts are non-idempotent (they create a new Slack message), so retries
 	// are disabled to avoid duplicate posts on transient errors.
-	webhookClient := httpkit.New(
-		requestTimeout,
-		httpkit.WithNoRetry(),
-		httpkit.WithSkipNetworkValidation(cfg.SkipNetworkValidation),
-	)
-
-	return &SlackClient{
-		webhookURL:       strings.TrimSpace(cfg.WebhookURL),
-		token:            token,
-		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
-		httpClient:       httpClient,
-		webAPIClient:     slackapi.New(token, slackOptions...),
-		webhookClient:    webhookClient,
+	return webhookTransport{
+		webhookURL: strings.TrimSpace(cfg.WebhookURL),
+		client: httpkit.New(
+			requestTimeout,
+			httpkit.WithNoRetry(),
+			httpkit.WithSkipNetworkValidation(cfg.SkipNetworkValidation),
+		),
 	}
 }
 
@@ -102,15 +106,15 @@ type PostMessageResponse struct {
 }
 
 // PostMessage posts a message to Slack.
-func (c *SlackClient) PostMessage(ctx context.Context, msg Message) (*PostMessageResponse, error) {
-	if c.webhookURL == "" {
+func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostMessageResponse, error) {
+	if w.webhookURL == "" {
 		return nil, fmt.Errorf("slack: webhook URL is required")
 	}
 	if strings.TrimSpace(msg.Text) == "" {
 		return nil, fmt.Errorf("slack: text is required")
 	}
 
-	responseBody, err := c.webhookClient.PostJSONAndFetchBytes(ctx, c.webhookURL, msg)
+	responseBody, err := w.client.PostJSONAndFetchBytes(ctx, w.webhookURL, msg)
 	if err != nil {
 		return nil, fmt.Errorf("slack: post webhook: %w", err)
 	}
@@ -121,6 +125,42 @@ func (c *SlackClient) PostMessage(ctx context.Context, msg Message) (*PostMessag
 		StatusCode: http.StatusOK,
 		Body:       strings.TrimSpace(string(responseBody)),
 	}, nil
+}
+
+// ----------------------------------------------------------------------
+// Web API transport
+// ----------------------------------------------------------------------
+
+// webAPITransport posts, deletes, and lists messages/channels through the
+// token-authenticated Slack Web API.
+type webAPITransport struct {
+	token            string
+	defaultChannelID string
+	client           *slackapi.Client
+}
+
+func newWebAPITransport(cfg SlackClientConfig) webAPITransport {
+	httpClient := &http.Client{Timeout: requestTimeout}
+	slackOptions := []slackapi.Option{slackapi.OptionHTTPClient(httpClient)}
+	if apiBaseURL := normalizeSlackAPIBaseURL(cfg.APIBaseURL); apiBaseURL != "" {
+		slackOptions = append(slackOptions, slackapi.OptionAPIURL(apiBaseURL))
+	}
+	token := strings.TrimSpace(cfg.Token)
+
+	return webAPITransport{
+		token:            token,
+		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
+		client:           slackapi.New(token, slackOptions...),
+	}
+}
+
+// requireToken reports an error if no Web API token was configured. All Web API
+// operations (post-as-user, delete, list) need one, so they share this check.
+func (w *webAPITransport) requireToken() error {
+	if w.token == "" {
+		return fmt.Errorf("slack: token is required")
+	}
+	return nil
 }
 
 // WebAPIMessage is the message input sent to Slack chat.postMessage.
@@ -191,14 +231,14 @@ type ListChannelsResponse struct {
 }
 
 // PostWebAPIMessage posts a message with Slack Web API chat.postMessage.
-func (c *SlackClient) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) (*PostWebAPIMessageResponse, error) {
-	if c.token == "" {
-		return nil, fmt.Errorf("slack: token is required")
+func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) (*PostWebAPIMessageResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(msg.Text) == "" {
 		return nil, fmt.Errorf("slack: text is required")
 	}
-	msg.ChannelID = c.channelIDOrDefault(msg.ChannelID)
+	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
 	if msg.ChannelID == "" {
 		return nil, fmt.Errorf("slack: channel_id is required")
 	}
@@ -207,7 +247,7 @@ func (c *SlackClient) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) 
 	if err != nil {
 		return nil, err
 	}
-	channelID, ts, err := c.webAPIClient.PostMessageContext(ctx, msg.ChannelID, options...)
+	channelID, ts, err := w.client.PostMessageContext(ctx, msg.ChannelID, options...)
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.postMessage failed: %w", err)
 	}
@@ -219,9 +259,9 @@ func (c *SlackClient) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) 
 }
 
 // ListChannels lists Slack channel-like conversations through conversations.list.
-func (c *SlackClient) ListChannels(ctx context.Context, opts ListChannelsOptions) (*ListChannelsResponse, error) {
-	if c.token == "" {
-		return nil, fmt.Errorf("slack: token is required")
+func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOptions) (*ListChannelsResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
 	}
 
 	limit, err := normalizeChannelListLimit(opts.Limit)
@@ -244,7 +284,7 @@ func (c *SlackClient) ListChannels(ctx context.Context, opts ListChannelsOptions
 
 	for len(channels) < limit {
 		requestLimit := min(channelListPageSize, limit-len(channels))
-		apiChannels, nextCursor, err := c.webAPIClient.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
+		apiChannels, nextCursor, err := w.client.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
 			Cursor:          cursor,
 			ExcludeArchived: opts.ExcludeArchived,
 			Limit:           requestLimit,
@@ -288,11 +328,11 @@ func (c *SlackClient) ListChannels(ctx context.Context, opts ListChannelsOptions
 }
 
 // DeleteWebAPIMessage deletes a message with Slack Web API chat.delete.
-func (c *SlackClient) DeleteWebAPIMessage(ctx context.Context, channelID string, ts string) (*DeleteWebAPIMessageResponse, error) {
-	if c.token == "" {
-		return nil, fmt.Errorf("slack: token is required")
+func (w *webAPITransport) DeleteWebAPIMessage(ctx context.Context, channelID string, ts string) (*DeleteWebAPIMessageResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
 	}
-	channelID = c.channelIDOrDefault(channelID)
+	channelID = w.channelIDOrDefault(channelID)
 	if channelID == "" {
 		return nil, fmt.Errorf("slack: channel_id is required")
 	}
@@ -300,7 +340,7 @@ func (c *SlackClient) DeleteWebAPIMessage(ctx context.Context, channelID string,
 		return nil, fmt.Errorf("slack: ts is required")
 	}
 
-	respChannelID, respTS, err := c.webAPIClient.DeleteMessageContext(ctx, channelID, strings.TrimSpace(ts))
+	respChannelID, respTS, err := w.client.DeleteMessageContext(ctx, channelID, strings.TrimSpace(ts))
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.delete failed: %w", err)
 	}
@@ -311,12 +351,12 @@ func (c *SlackClient) DeleteWebAPIMessage(ctx context.Context, channelID string,
 	}, nil
 }
 
-func (c *SlackClient) channelIDOrDefault(channelID string) string {
+func (w *webAPITransport) channelIDOrDefault(channelID string) string {
 	channelID = strings.TrimSpace(channelID)
 	if channelID != "" {
 		return channelID
 	}
-	return c.defaultChannelID
+	return w.defaultChannelID
 }
 
 func normalizeSlackAPIBaseURL(raw string) string {

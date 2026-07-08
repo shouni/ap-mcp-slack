@@ -42,15 +42,23 @@ func (t *SlackTools) Register(server *mcp.Server) {
 	}, t.listSlackChannels)
 }
 
-// PostSlackMessageInput is the input for post_slack_message.
-type PostSlackMessageInput struct {
+// MessageContent holds the fields shared by post_slack_message and
+// post_slack_message_as_user (everything except thread_ts, whose semantics differ
+// slightly between the webhook and Web API paths, and channel_id, which only the
+// Web API path accepts).
+type MessageContent struct {
 	Text        string           `json:"text" jsonschema:"Slackに投稿する本文。デフォルトでSlackのmrkdwnとして解釈されます。"`
 	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"任意のSlack Block Kit blocks配列。指定する場合もアクセシビリティ用にtextを含めてください。"`
 	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"任意のSlack attachments配列。"`
-	ThreadTS    string           `json:"thread_ts,omitempty" jsonschema:"スレッド返信にする場合の親メッセージts。Webhook側で利用可能な場合のみ有効です。"`
 	IconEmoji   string           `json:"icon_emoji,omitempty" jsonschema:"投稿者アイコンとして使うSlack絵文字名。例: :robot_face:"`
 	UnfurlLinks *bool            `json:"unfurl_links,omitempty" jsonschema:"リンク展開を制御します。"`
 	UnfurlMedia *bool            `json:"unfurl_media,omitempty" jsonschema:"メディア展開を制御します。"`
+}
+
+// PostSlackMessageInput is the input for post_slack_message.
+type PostSlackMessageInput struct {
+	MessageContent
+	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"スレッド返信にする場合の親メッセージts。Webhook側で利用可能な場合のみ有効です。"`
 }
 
 // PostSlackMessageOutput is the structured output for post_slack_message.
@@ -62,14 +70,9 @@ type PostSlackMessageOutput struct {
 
 // PostSlackMessageAsUserInput is the input for post_slack_message_as_user.
 type PostSlackMessageAsUserInput struct {
-	ChannelID   string           `json:"channel_id,omitempty" jsonschema:"投稿先チャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
-	Text        string           `json:"text" jsonschema:"Slackに投稿する本文。デフォルトでSlackのmrkdwnとして解釈されます。"`
-	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"任意のSlack Block Kit blocks配列。指定する場合もアクセシビリティ用にtextを含めてください。"`
-	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"任意のSlack attachments配列。"`
-	ThreadTS    string           `json:"thread_ts,omitempty" jsonschema:"スレッド返信にする場合の親メッセージts。"`
-	IconEmoji   string           `json:"icon_emoji,omitempty" jsonschema:"投稿者アイコンとして使うSlack絵文字名。例: :robot_face:"`
-	UnfurlLinks *bool            `json:"unfurl_links,omitempty" jsonschema:"リンク展開を制御します。"`
-	UnfurlMedia *bool            `json:"unfurl_media,omitempty" jsonschema:"メディア展開を制御します。"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"投稿先チャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
+	MessageContent
+	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"スレッド返信にする場合の親メッセージts。"`
 }
 
 // PostSlackMessageAsUserOutput is the structured output for post_slack_message_as_user.
