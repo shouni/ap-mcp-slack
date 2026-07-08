@@ -6,7 +6,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/shouni/go-http-kit/httpkit"
 )
+
+// newTestWebhookClient builds a SlackClient whose webhook transport skips
+// go-http-kit's SSRF/DNS-rebinding validation, for tests that point webhookURL at a
+// loopback httptest server. This lives here rather than as a SlackClientConfig field
+// so production callers have no way to disable that validation.
+func newTestWebhookClient(webhookURL string) *SlackClient {
+	return &SlackClient{
+		webhookTransport: webhookTransport{
+			webhookURL:    webhookURL,
+			httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry(), httpkit.WithSkipNetworkValidation(true)),
+		},
+	}
+}
 
 func TestPostMessage(t *testing.T) {
 	t.Parallel()
@@ -26,7 +41,7 @@ func TestPostMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSlackClientWithConfig(SlackClientConfig{WebhookURL: server.URL, SkipNetworkValidation: true})
+	client := newTestWebhookClient(server.URL)
 	unfurlLinks := false
 	resp, err := client.PostMessage(context.Background(), Message{
 		Text: "*hello* <@shouni>",
@@ -70,7 +85,7 @@ func TestPostMessageReturnsSlackError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSlackClientWithConfig(SlackClientConfig{WebhookURL: server.URL, SkipNetworkValidation: true})
+	client := newTestWebhookClient(server.URL)
 	if _, err := client.PostMessage(context.Background(), Message{Text: "hello"}); err == nil {
 		t.Fatal("PostMessage() error = nil, want error")
 	}

@@ -46,10 +46,6 @@ type SlackClientConfig struct {
 	Token            string
 	DefaultChannelID string
 	APIBaseURL       string
-	// SkipNetworkValidation disables go-http-kit's SSRF/DNS rebinding checks on the
-	// webhook client. Intended for tests that point WebhookURL at a loopback
-	// httptest server; production use should leave this false.
-	SkipNetworkValidation bool
 }
 
 // NewSlackClient creates a SlackClient.
@@ -71,20 +67,19 @@ func NewSlackClientWithConfig(cfg SlackClientConfig) *SlackClient {
 
 // webhookTransport posts messages through Slack Incoming Webhooks.
 type webhookTransport struct {
-	webhookURL string
-	client     *httpkit.Client
+	webhookURL    string
+	httpKitClient *httpkit.Client
 }
 
 func newWebhookTransport(cfg SlackClientConfig) webhookTransport {
 	// Webhook posts are non-idempotent (they create a new Slack message), so retries
-	// are disabled to avoid duplicate posts on transient errors.
+	// are disabled to avoid duplicate posts on transient errors. SSRF/DNS-rebinding
+	// validation always stays on here; tests that need a loopback httptest server
+	// build a webhookTransport literal directly rather than going through this
+	// production constructor, so there's no config flag that could flip it off.
 	return webhookTransport{
-		webhookURL: strings.TrimSpace(cfg.WebhookURL),
-		client: httpkit.New(
-			requestTimeout,
-			httpkit.WithNoRetry(),
-			httpkit.WithSkipNetworkValidation(cfg.SkipNetworkValidation),
-		),
+		webhookURL:    strings.TrimSpace(cfg.WebhookURL),
+		httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry()),
 	}
 }
 
@@ -114,13 +109,14 @@ func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostM
 		return nil, fmt.Errorf("slack: text is required")
 	}
 
-	responseBody, err := w.client.PostJSONAndFetchBytes(ctx, w.webhookURL, msg)
+	responseBody, err := w.httpKitClient.PostJSONAndFetchBytes(ctx, w.webhookURL, msg)
 	if err != nil {
 		return nil, fmt.Errorf("slack: post webhook: %w", err)
 	}
 
-	// Incoming webhooks respond 200 on any accepted post; non-2xx responses surface
-	// as an error from PostJSONAndFetchBytes above.
+	// go-http-kit's PostJSONAndFetchBytes abstracts away the exact 2xx status code
+	// (it only surfaces non-2xx as an error), and Slack's incoming webhooks are
+	// documented to respond 200 on every accepted post, so that's what we report here.
 	return &PostMessageResponse{
 		StatusCode: http.StatusOK,
 		Body:       strings.TrimSpace(string(responseBody)),
@@ -136,7 +132,7 @@ func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostM
 type webAPITransport struct {
 	token            string
 	defaultChannelID string
-	client           *slackapi.Client
+	slackAPIClient   *slackapi.Client
 }
 
 func newWebAPITransport(cfg SlackClientConfig) webAPITransport {
@@ -150,7 +146,7 @@ func newWebAPITransport(cfg SlackClientConfig) webAPITransport {
 	return webAPITransport{
 		token:            token,
 		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
-		client:           slackapi.New(token, slackOptions...),
+		slackAPIClient:   slackapi.New(token, slackOptions...),
 	}
 }
 
@@ -247,7 +243,7 @@ func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessa
 	if err != nil {
 		return nil, err
 	}
-	channelID, ts, err := w.client.PostMessageContext(ctx, msg.ChannelID, options...)
+	channelID, ts, err := w.slackAPIClient.PostMessageContext(ctx, msg.ChannelID, options...)
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.postMessage failed: %w", err)
 	}
@@ -284,7 +280,7 @@ func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOpt
 
 	for len(channels) < limit {
 		requestLimit := min(channelListPageSize, limit-len(channels))
-		apiChannels, nextCursor, err := w.client.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
+		apiChannels, nextCursor, err := w.slackAPIClient.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
 			Cursor:          cursor,
 			ExcludeArchived: opts.ExcludeArchived,
 			Limit:           requestLimit,
@@ -340,7 +336,7 @@ func (w *webAPITransport) DeleteWebAPIMessage(ctx context.Context, channelID str
 		return nil, fmt.Errorf("slack: ts is required")
 	}
 
-	respChannelID, respTS, err := w.client.DeleteMessageContext(ctx, channelID, strings.TrimSpace(ts))
+	respChannelID, respTS, err := w.slackAPIClient.DeleteMessageContext(ctx, channelID, strings.TrimSpace(ts))
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.delete failed: %w", err)
 	}
