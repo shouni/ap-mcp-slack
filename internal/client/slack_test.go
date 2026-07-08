@@ -26,7 +26,7 @@ func TestPostMessage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSlackClient(server.URL)
+	client := NewSlackClientWithConfig(SlackClientConfig{WebhookURL: server.URL, SkipNetworkValidation: true})
 	unfurlLinks := false
 	resp, err := client.PostMessage(context.Background(), Message{
 		Text: "*hello* <@shouni>",
@@ -70,7 +70,7 @@ func TestPostMessageReturnsSlackError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSlackClient(server.URL)
+	client := NewSlackClientWithConfig(SlackClientConfig{WebhookURL: server.URL, SkipNetworkValidation: true})
 	if _, err := client.PostMessage(context.Background(), Message{Text: "hello"}); err == nil {
 		t.Fatal("PostMessage() error = nil, want error")
 	}

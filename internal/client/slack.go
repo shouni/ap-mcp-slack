@@ -2,22 +2,20 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/shouni/go-http-kit/httpkit"
 	slackapi "github.com/slack-go/slack"
 )
 
 const (
 	requestTimeout = 10 * time.Second
-	maxResponse    = 64 * 1024
 
 	defaultChannelListLimit = 200
 	maxChannelListLimit     = 1000
@@ -39,6 +37,7 @@ type SlackClient struct {
 	defaultChannelID string
 	httpClient       *http.Client
 	webAPIClient     *slackapi.Client
+	webhookClient    *httpkit.Client
 }
 
 // SlackClientConfig configures SlackClient.
@@ -47,6 +46,10 @@ type SlackClientConfig struct {
 	Token            string
 	DefaultChannelID string
 	APIBaseURL       string
+	// SkipNetworkValidation disables go-http-kit's SSRF/DNS rebinding checks on the
+	// webhook client. Intended for tests that point WebhookURL at a loopback
+	// httptest server; production use should leave this false.
+	SkipNetworkValidation bool
 }
 
 // NewSlackClient creates a SlackClient.
@@ -63,12 +66,21 @@ func NewSlackClientWithConfig(cfg SlackClientConfig) *SlackClient {
 	}
 	token := strings.TrimSpace(cfg.Token)
 
+	// Webhook posts are non-idempotent (they create a new Slack message), so retries
+	// are disabled to avoid duplicate posts on transient errors.
+	webhookClient := httpkit.New(
+		requestTimeout,
+		httpkit.WithNoRetry(),
+		httpkit.WithSkipNetworkValidation(cfg.SkipNetworkValidation),
+	)
+
 	return &SlackClient{
 		webhookURL:       strings.TrimSpace(cfg.WebhookURL),
 		token:            token,
 		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
 		httpClient:       httpClient,
 		webAPIClient:     slackapi.New(token, slackOptions...),
+		webhookClient:    webhookClient,
 	}
 }
 
@@ -98,37 +110,17 @@ func (c *SlackClient) PostMessage(ctx context.Context, msg Message) (*PostMessag
 		return nil, fmt.Errorf("slack: text is required")
 	}
 
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return nil, fmt.Errorf("slack: failed to encode payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.webhookURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("slack: failed to build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/plain, application/json")
-
-	resp, err := c.httpClient.Do(req)
+	responseBody, err := c.webhookClient.PostJSONAndFetchBytes(ctx, c.webhookURL, msg)
 	if err != nil {
 		return nil, fmt.Errorf("slack: post webhook: %w", err)
 	}
-	defer resp.Body.Close()
 
-	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
-	if readErr != nil {
-		return nil, fmt.Errorf("slack: failed to read response: %w", readErr)
-	}
-	out := &PostMessageResponse{
-		StatusCode: resp.StatusCode,
+	// Incoming webhooks respond 200 on any accepted post; non-2xx responses surface
+	// as an error from PostJSONAndFetchBytes above.
+	return &PostMessageResponse{
+		StatusCode: http.StatusOK,
 		Body:       strings.TrimSpace(string(responseBody)),
-	}
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("slack: webhook returned %d: %s", resp.StatusCode, out.Body)
-	}
-	return out, nil
+	}, nil
 }
 
 // WebAPIMessage is the message input sent to Slack chat.postMessage.
