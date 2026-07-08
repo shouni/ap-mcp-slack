@@ -2,28 +2,27 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/shouni/go-http-kit/httpkit"
 	slackapi "github.com/slack-go/slack"
 )
 
 const (
 	requestTimeout = 10 * time.Second
-	maxResponse    = 64 * 1024
 
 	defaultChannelListLimit = 200
 	maxChannelListLimit     = 1000
 	channelListPageSize     = 200
 )
 
+// Sort values accepted by list_slack_channels' sort option.
 const (
 	ChannelSortNone        = "none"
 	ChannelSortNameAsc     = "name_asc"
@@ -33,12 +32,13 @@ const (
 )
 
 // SlackClient posts and deletes Slack messages through incoming webhooks and Web API.
+// It composes a webhook transport (Message/PostMessage) and a token-authenticated Web
+// API transport (WebAPIMessage/PostWebAPIMessage/DeleteWebAPIMessage/ListChannels).
+// The two share no state, so they're kept as separate embedded types rather than one
+// struct with fields that are only meaningful to one side or the other.
 type SlackClient struct {
-	webhookURL       string
-	token            string
-	defaultChannelID string
-	httpClient       *http.Client
-	webAPIClient     *slackapi.Client
+	webhookTransport
+	webAPITransport
 }
 
 // SlackClientConfig configures SlackClient.
@@ -56,19 +56,37 @@ func NewSlackClient(webhookURL string) *SlackClient {
 
 // NewSlackClientWithConfig creates a SlackClient with explicit configuration.
 func NewSlackClientWithConfig(cfg SlackClientConfig) *SlackClient {
-	httpClient := &http.Client{Timeout: requestTimeout}
-	slackOptions := []slackapi.Option{slackapi.OptionHTTPClient(httpClient)}
-	if apiBaseURL := normalizeSlackAPIBaseURL(cfg.APIBaseURL); apiBaseURL != "" {
-		slackOptions = append(slackOptions, slackapi.OptionAPIURL(apiBaseURL))
-	}
-	token := strings.TrimSpace(cfg.Token)
-
 	return &SlackClient{
-		webhookURL:       strings.TrimSpace(cfg.WebhookURL),
-		token:            token,
-		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
-		httpClient:       httpClient,
-		webAPIClient:     slackapi.New(token, slackOptions...),
+		webhookTransport: newWebhookTransport(cfg),
+		webAPITransport:  newWebAPITransport(cfg),
+	}
+}
+
+// ----------------------------------------------------------------------
+// Webhook transport
+// ----------------------------------------------------------------------
+
+// webhookTransport posts messages through Slack Incoming Webhooks.
+//
+// Response bodies are capped by go-http-kit itself at httpkit.MaxResponseBodySize
+// (25MB, unconditional, not caller-configurable in v1.6.0) rather than the tighter
+// 64KB this package enforced manually before adopting go-http-kit. A malicious or
+// misbehaving webhook endpoint can't force unbounded memory growth, only up to that
+// fixed ceiling; a real Slack incoming webhook only ever returns a few bytes.
+type webhookTransport struct {
+	webhookURL    string
+	httpKitClient *httpkit.Client
+}
+
+func newWebhookTransport(cfg SlackClientConfig) webhookTransport {
+	// Webhook posts are non-idempotent (they create a new Slack message), so retries
+	// are disabled to avoid duplicate posts on transient errors. SSRF/DNS-rebinding
+	// validation always stays on here; tests that need a loopback httptest server
+	// build a webhookTransport literal directly rather than going through this
+	// production constructor, so there's no config flag that could flip it off.
+	return webhookTransport{
+		webhookURL:    strings.TrimSpace(cfg.WebhookURL),
+		httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry()),
 	}
 }
 
@@ -90,45 +108,62 @@ type PostMessageResponse struct {
 }
 
 // PostMessage posts a message to Slack.
-func (c *SlackClient) PostMessage(ctx context.Context, msg Message) (*PostMessageResponse, error) {
-	if c.webhookURL == "" {
+func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostMessageResponse, error) {
+	if w.webhookURL == "" {
 		return nil, fmt.Errorf("slack: webhook URL is required")
 	}
 	if strings.TrimSpace(msg.Text) == "" {
 		return nil, fmt.Errorf("slack: text is required")
 	}
 
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return nil, fmt.Errorf("slack: failed to encode payload: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.webhookURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("slack: failed to build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/plain, application/json")
-
-	resp, err := c.httpClient.Do(req)
+	responseBody, err := w.httpKitClient.PostJSONAndFetchBytes(ctx, w.webhookURL, msg)
 	if err != nil {
 		return nil, fmt.Errorf("slack: post webhook: %w", err)
 	}
-	defer resp.Body.Close()
 
-	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
-	if readErr != nil {
-		return nil, fmt.Errorf("slack: failed to read response: %w", readErr)
-	}
-	out := &PostMessageResponse{
-		StatusCode: resp.StatusCode,
+	// go-http-kit's PostJSONAndFetchBytes abstracts away the exact 2xx status code
+	// (it only surfaces non-2xx as an error), and Slack's incoming webhooks are
+	// documented to respond 200 on every accepted post, so that's what we report here.
+	return &PostMessageResponse{
+		StatusCode: http.StatusOK,
 		Body:       strings.TrimSpace(string(responseBody)),
-	}
+	}, nil
+}
 
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("slack: webhook returned %d: %s", resp.StatusCode, out.Body)
+// ----------------------------------------------------------------------
+// Web API transport
+// ----------------------------------------------------------------------
+
+// webAPITransport posts, deletes, and lists messages/channels through the
+// token-authenticated Slack Web API.
+type webAPITransport struct {
+	token            string
+	defaultChannelID string
+	slackAPIClient   *slackapi.Client
+}
+
+func newWebAPITransport(cfg SlackClientConfig) webAPITransport {
+	httpClient := &http.Client{Timeout: requestTimeout}
+	slackOptions := []slackapi.Option{slackapi.OptionHTTPClient(httpClient)}
+	if apiBaseURL := normalizeSlackAPIBaseURL(cfg.APIBaseURL); apiBaseURL != "" {
+		slackOptions = append(slackOptions, slackapi.OptionAPIURL(apiBaseURL))
 	}
-	return out, nil
+	token := strings.TrimSpace(cfg.Token)
+
+	return webAPITransport{
+		token:            token,
+		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
+		slackAPIClient:   slackapi.New(token, slackOptions...),
+	}
+}
+
+// requireToken reports an error if no Web API token was configured. All Web API
+// operations (post-as-user, delete, list) need one, so they share this check.
+func (w *webAPITransport) requireToken() error {
+	if w.token == "" {
+		return fmt.Errorf("slack: token is required")
+	}
+	return nil
 }
 
 // WebAPIMessage is the message input sent to Slack chat.postMessage.
@@ -199,14 +234,14 @@ type ListChannelsResponse struct {
 }
 
 // PostWebAPIMessage posts a message with Slack Web API chat.postMessage.
-func (c *SlackClient) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) (*PostWebAPIMessageResponse, error) {
-	if c.token == "" {
-		return nil, fmt.Errorf("slack: token is required")
+func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) (*PostWebAPIMessageResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(msg.Text) == "" {
 		return nil, fmt.Errorf("slack: text is required")
 	}
-	msg.ChannelID = c.channelIDOrDefault(msg.ChannelID)
+	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
 	if msg.ChannelID == "" {
 		return nil, fmt.Errorf("slack: channel_id is required")
 	}
@@ -215,7 +250,7 @@ func (c *SlackClient) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) 
 	if err != nil {
 		return nil, err
 	}
-	channelID, ts, err := c.webAPIClient.PostMessageContext(ctx, msg.ChannelID, options...)
+	channelID, ts, err := w.slackAPIClient.PostMessageContext(ctx, msg.ChannelID, options...)
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.postMessage failed: %w", err)
 	}
@@ -227,9 +262,9 @@ func (c *SlackClient) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) 
 }
 
 // ListChannels lists Slack channel-like conversations through conversations.list.
-func (c *SlackClient) ListChannels(ctx context.Context, opts ListChannelsOptions) (*ListChannelsResponse, error) {
-	if c.token == "" {
-		return nil, fmt.Errorf("slack: token is required")
+func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOptions) (*ListChannelsResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
 	}
 
 	limit, err := normalizeChannelListLimit(opts.Limit)
@@ -252,7 +287,7 @@ func (c *SlackClient) ListChannels(ctx context.Context, opts ListChannelsOptions
 
 	for len(channels) < limit {
 		requestLimit := min(channelListPageSize, limit-len(channels))
-		apiChannels, nextCursor, err := c.webAPIClient.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
+		apiChannels, nextCursor, err := w.slackAPIClient.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
 			Cursor:          cursor,
 			ExcludeArchived: opts.ExcludeArchived,
 			Limit:           requestLimit,
@@ -296,11 +331,11 @@ func (c *SlackClient) ListChannels(ctx context.Context, opts ListChannelsOptions
 }
 
 // DeleteWebAPIMessage deletes a message with Slack Web API chat.delete.
-func (c *SlackClient) DeleteWebAPIMessage(ctx context.Context, channelID string, ts string) (*DeleteWebAPIMessageResponse, error) {
-	if c.token == "" {
-		return nil, fmt.Errorf("slack: token is required")
+func (w *webAPITransport) DeleteWebAPIMessage(ctx context.Context, channelID string, ts string) (*DeleteWebAPIMessageResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
 	}
-	channelID = c.channelIDOrDefault(channelID)
+	channelID = w.channelIDOrDefault(channelID)
 	if channelID == "" {
 		return nil, fmt.Errorf("slack: channel_id is required")
 	}
@@ -308,7 +343,7 @@ func (c *SlackClient) DeleteWebAPIMessage(ctx context.Context, channelID string,
 		return nil, fmt.Errorf("slack: ts is required")
 	}
 
-	respChannelID, respTS, err := c.webAPIClient.DeleteMessageContext(ctx, channelID, strings.TrimSpace(ts))
+	respChannelID, respTS, err := w.slackAPIClient.DeleteMessageContext(ctx, channelID, strings.TrimSpace(ts))
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.delete failed: %w", err)
 	}
@@ -319,12 +354,12 @@ func (c *SlackClient) DeleteWebAPIMessage(ctx context.Context, channelID string,
 	}, nil
 }
 
-func (c *SlackClient) channelIDOrDefault(channelID string) string {
+func (w *webAPITransport) channelIDOrDefault(channelID string) string {
 	channelID = strings.TrimSpace(channelID)
 	if channelID != "" {
 		return channelID
 	}
-	return c.defaultChannelID
+	return w.defaultChannelID
 }
 
 func normalizeSlackAPIBaseURL(raw string) string {
@@ -362,7 +397,7 @@ func normalizeChannelTypes(types []string) ([]string, error) {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(types))
 	for _, rawType := range types {
-		for _, part := range strings.Split(rawType, ",") {
+		for part := range strings.SplitSeq(rawType, ",") {
 			channelType := strings.ToLower(strings.TrimSpace(part))
 			if channelType == "" {
 				continue

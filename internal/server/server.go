@@ -6,7 +6,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/client"
+	"ap-mcp-slack/internal/app"
 	"ap-mcp-slack/internal/tools"
 )
 
@@ -15,14 +15,14 @@ type Server struct {
 	mcpServer *mcp.Server
 }
 
-// New creates a Server and registers all tools.
-func New(slackClient *client.SlackClient) *Server {
+// New creates a Server from the DI container and registers all tools.
+func New(container *app.Container) *Server {
 	mcpServer := mcp.NewServer(&mcp.Implementation{
 		Name:    "ap-mcp-slack",
 		Version: "dev",
 	}, nil)
 
-	tools.NewSlackTools(slackClient).Register(mcpServer)
+	tools.NewSlackTools(container.Slack).Register(mcpServer)
 
 	return &Server{mcpServer: mcpServer}
 }
