@@ -21,6 +21,7 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 			WebhookURL:       cfg.SlackWebhookURL,
 			Token:            cfg.SlackToken,
 			DefaultChannelID: cfg.SlackChannelID,
+			SourceLabel:      cfg.SlackSourceLabel,
 		}),
 	}, nil
 }

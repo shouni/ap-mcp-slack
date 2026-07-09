@@ -6,11 +6,18 @@ import (
 	"strings"
 )
 
+// defaultSlackSourceLabel is appended to Web API ("post as user") messages so they
+// remain distinguishable from messages the user posts by hand: a user token makes
+// chat.postMessage post under the user's own name/avatar, with none of the "APP"
+// badge or bot identity that would otherwise set MCP-originated posts apart.
+const defaultSlackSourceLabel = "ap-mcp-slack (MCP) 経由"
+
 // Config holds application settings.
 type Config struct {
-	SlackWebhookURL string
-	SlackToken      string
-	SlackChannelID  string
+	SlackWebhookURL  string
+	SlackToken       string
+	SlackChannelID   string
+	SlackSourceLabel string
 }
 
 // Load reads environment variables.
@@ -18,11 +25,16 @@ func Load() (*Config, error) {
 	webhookURL := strings.TrimSpace(os.Getenv("MCP_SLACK_WEBHOOK_URL"))
 	slackToken := firstNonEmptyEnv("MCP_SLACK_USER_TOKEN", "MCP_SLACK_TOKEN", "MCP_SLACK_BOT_TOKEN")
 	slackChannelID := strings.TrimSpace(os.Getenv("MCP_SLACK_CHANNEL_ID"))
+	slackSourceLabel := strings.TrimSpace(os.Getenv("MCP_SLACK_SOURCE_LABEL"))
+	if slackSourceLabel == "" {
+		slackSourceLabel = defaultSlackSourceLabel
+	}
 
 	return &Config{
-		SlackWebhookURL: webhookURL,
-		SlackToken:      slackToken,
-		SlackChannelID:  slackChannelID,
+		SlackWebhookURL:  webhookURL,
+		SlackToken:       slackToken,
+		SlackChannelID:   slackChannelID,
+		SlackSourceLabel: slackSourceLabel,
 	}, nil
 }
 

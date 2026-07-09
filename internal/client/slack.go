@@ -47,6 +47,12 @@ type SlackClientConfig struct {
 	Token            string
 	DefaultChannelID string
 	APIBaseURL       string
+	// SourceLabel, if set, is appended as a Block Kit context footer on every Web
+	// API ("post as user") message. Incoming Webhook posts don't need it: Slack
+	// already renders those under the app's own name/icon with an "APP" badge, so
+	// they're already distinguishable from a message the user typed themselves. A
+	// user-token chat.postMessage call has no such marker.
+	SourceLabel string
 }
 
 // NewSlackClient creates a SlackClient.
@@ -139,6 +145,7 @@ func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostM
 type webAPITransport struct {
 	token            string
 	defaultChannelID string
+	sourceLabel      string
 	slackAPIClient   *slackapi.Client
 }
 
@@ -153,6 +160,7 @@ func newWebAPITransport(cfg SlackClientConfig) webAPITransport {
 	return webAPITransport{
 		token:            token,
 		defaultChannelID: strings.TrimSpace(cfg.DefaultChannelID),
+		sourceLabel:      strings.TrimSpace(cfg.SourceLabel),
 		slackAPIClient:   slackapi.New(token, slackOptions...),
 	}
 }
@@ -246,7 +254,7 @@ func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessa
 		return nil, fmt.Errorf("slack: channel_id is required")
 	}
 
-	options, err := buildPostMessageOptions(msg)
+	options, err := buildPostMessageOptions(msg, w.sourceLabel)
 	if err != nil {
 		return nil, err
 	}
@@ -520,7 +528,7 @@ func channelNames(channels []SlackChannelSummary) []string {
 	return names
 }
 
-func buildPostMessageOptions(msg WebAPIMessage) ([]slackapi.MsgOption, error) {
+func buildPostMessageOptions(msg WebAPIMessage, sourceLabel string) ([]slackapi.MsgOption, error) {
 	options := []slackapi.MsgOption{
 		slackapi.MsgOptionText(msg.Text, false),
 	}
@@ -546,6 +554,7 @@ func buildPostMessageOptions(msg WebAPIMessage) ([]slackapi.MsgOption, error) {
 	if err != nil {
 		return nil, err
 	}
+	blocks = appendSourceLabelBlock(blocks, msg.Text, sourceLabel)
 	if len(blocks) > 0 {
 		options = append(options, slackapi.MsgOptionBlocks(blocks...))
 	}
@@ -559,6 +568,31 @@ func buildPostMessageOptions(msg WebAPIMessage) ([]slackapi.MsgOption, error) {
 	}
 
 	return options, nil
+}
+
+// appendSourceLabelBlock appends a context block naming the message's source (e.g.
+// "ap-mcp-slack (MCP) 経由"). This exists because a user-token chat.postMessage call
+// posts under the human user's own name and avatar with no "APP" badge, so without
+// this footer there is no way to tell an MCP-originated post apart from one the user
+// typed by hand. If the caller supplied no blocks, msg.Text is first turned into a
+// section block so the visible body isn't replaced by just the footer: Slack renders
+// blocks (when present) in place of text, using text only as the fallback/notification
+// string.
+func appendSourceLabelBlock(blocks []slackapi.Block, text, sourceLabel string) []slackapi.Block {
+	sourceLabel = strings.TrimSpace(sourceLabel)
+	if sourceLabel == "" {
+		return blocks
+	}
+
+	if len(blocks) == 0 && strings.TrimSpace(text) != "" {
+		blocks = append(blocks, slackapi.NewSectionBlock(
+			slackapi.NewTextBlockObject(slackapi.MarkdownType, text, false, false), nil, nil,
+		))
+	}
+
+	return append(blocks, slackapi.NewContextBlock("",
+		slackapi.NewTextBlockObject(slackapi.MarkdownType, sourceLabel, false, false),
+	))
 }
 
 func convertBlocks(rawBlocks []map[string]any) ([]slackapi.Block, error) {
