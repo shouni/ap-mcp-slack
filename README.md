@@ -7,7 +7,7 @@
 
 Slack Incoming Webhook と Slack Web API で投稿・削除するための MCP サーバーです。
 
-Codex などの MCP クライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
+MCP クライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
 
 ## 提供ツール
 
@@ -17,6 +17,9 @@ Codex などの MCP クライアントからコマンドとして起動され、
 | `post_slack_message_as_user` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `chat.postMessage` で投稿し、`channel_id` と `ts` を返す |
 | `delete_slack_message` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `chat.delete` で投稿済みメッセージを削除 |
 | `list_slack_channels` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `conversations.list` でチャンネル一覧を取得 |
+| `list_slack_users` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `users.list` でワークスペースメンバー一覧を取得 |
+| `lookup_slack_user_by_email` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `users.lookupByEmail` でメールアドレスから単一ユーザーを検索 |
+| `resolve_slack_user` | `name` または `email` から Slack ユーザーを一意に解決し、`<@U...>` 形式のmentionを返す |
 
 `post_slack_message` の主な入力:
 
@@ -63,6 +66,34 @@ Codex などの MCP クライアントからコマンドとして起動され、
 
 Slack API の `conversations.list` には並び順を指定する引数がないため、`sort` は MCP サーバーが取得した結果にローカルで適用します。
 
+`list_slack_channels` で `private_channel` を含めて取得するには、トークンに `groups:read` スコープが必要です（`public_channel` のみなら `channels:read` で足ります）。
+
+`list_slack_users` の主な入力:
+
+| フィールド | 必須 | 説明 |
+| --- | :---: | --- |
+| `query` | 任意 | `name` / `real_name` / `profile.display_name` / `email` に対する部分一致検索（大文字小文字を区別しません）。 |
+| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。 |
+| `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
+| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
+| `include_deleted` | 任意 | `true` の場合、deactivate済み(deleted)ユーザーも含めます。省略時は除外されます。 |
+
+`lookup_slack_user_by_email` の主な入力:
+
+| フィールド | 必須 | 説明 |
+| --- | :---: | --- |
+| `email` | 必須 | 検索対象のメールアドレス。 |
+
+`resolve_slack_user` の主な入力:
+
+| フィールド | 必須 | 説明 |
+| --- | :---: | --- |
+| `name` | 任意 | 検索対象のユーザー名・real name・display nameのいずれか。`email` が指定された場合は無視されます。 |
+| `email` | 任意 | 検索対象のメールアドレス。指定された場合は `name` より優先され、`users.lookupByEmail` で解決します。 |
+| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。`name` での検索時のみ利用します。 |
+
+`email` が指定されない場合、`name` はまず `users.list` から取得したユーザーの `name` / `real_name` / `display_name` との完全一致（大文字小文字を区別しない）を探します。完全一致が1件もない場合は部分一致にフォールバックします。一致が1件のときのみ `status: "found"` として `user` と `<@U...>` 形式の `mention` を返します。0件なら `status: "not_found"`、複数件なら `status: "ambiguous"` として `candidates` に候補一覧を返し、誤送信を避けるため自動選択はしません。
+
 ## プロジェクトレイアウト (Project Layout)
 
 ```text
@@ -75,7 +106,7 @@ ap-mcp-slack/
     ├── client/          # Slack Incoming Webhook / Web API クライアント
     │   └── slack.go     # webhookTransport（Webhook投稿） / webAPITransport（Web API）
     ├── tools/           # MCP ツール定義
-    │   └── slack.go     # 4ツールの入出力定義とハンドラ
+    │   └── slack.go     # 7ツールの入出力定義とハンドラ
     └── server/          # MCP stdio サーバー
 ```
 
@@ -150,12 +181,22 @@ go run .
 
 MCPサーバーの起動自体には Slack の環境変数は必須ではありません。未設定の機能を呼び出した場合は、各ツールが `webhook URL is required` や `token is required` を返します。
 
+## 必要な Slack トークンスコープ
+
+| スコープ | 用途 |
+| --- | --- |
+| `chat:write` | `post_slack_message_as_user` / `delete_slack_message` |
+| `channels:read` | `list_slack_channels`（`public_channel`） |
+| `groups:read` | `list_slack_channels` で `private_channel` を含める場合 |
+| `users:read` | `list_slack_users` / `resolve_slack_user`（name検索） |
+| `users:read.email` | `lookup_slack_user_by_email` / `resolve_slack_user`（email検索） |
+
 ## 主な依存関係 (Dependencies)
 
 | パッケージ | 説明 |
 | --- | --- |
 | [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | MCP 公式 Go SDK（stdio トランスポート） |
-| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.delete / conversations.list） |
+| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.delete / conversations.list / users.list / users.lookupByEmail） |
 | [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | Webhook投稿用のHTTPクライアント（リトライ制御・SSRF/DNS Rebinding対策） |
 
 ## ライセンス
