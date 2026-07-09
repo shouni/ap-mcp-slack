@@ -40,6 +40,21 @@ func (t *SlackTools) Register(server *mcp.Server) {
 		Name:        "list_slack_channels",
 		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.list でチャンネル一覧を取得します。並び順は取得した結果にローカルで適用します。",
 	}, t.listSlackChannels)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_slack_users",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API users.list でワークスペースメンバー一覧を取得します。deleted（deactivate済み）ユーザーはデフォルトで除外されます。要 users:read スコープ。",
+	}, t.listSlackUsers)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "lookup_slack_user_by_email",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API users.lookupByEmail でメールアドレスから単一ユーザーを検索します。要 users:read.email スコープ。",
+	}, t.lookupSlackUserByEmail)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "resolve_slack_user",
+		Description: "name または email から Slack ユーザーを一意に解決します。email が指定された場合は users.lookupByEmail を優先し、無ければ users.list から完全一致→部分一致の順で検索します。候補が複数ある場合は自動選択せず候補一覧を返します（曖昧なまま送信しないでください）。戻り値の mention はそのまま <@U...> 形式でメッセージに埋め込めます。要 users:read（および email 指定時は users:read.email）スコープ。",
+	}, t.resolveSlackUser)
 }
 
 // MessageContent holds the fields shared by post_slack_message and
@@ -113,6 +128,52 @@ type ListSlackChannelsOutput struct {
 	Count      int                          `json:"count"`
 	NextCursor string                       `json:"next_cursor,omitempty"`
 	Sort       string                       `json:"sort"`
+}
+
+// ListSlackUsersInput is the input for list_slack_users.
+type ListSlackUsersInput struct {
+	Query          string `json:"query,omitempty" jsonschema:"name / real_name / display_name / email に対する部分一致検索クエリ（大文字小文字を区別しません）。"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。"`
+	Cursor         string `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
+	TeamID         string `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。"`
+	IncludeDeleted bool   `json:"include_deleted,omitempty" jsonschema:"trueの場合、deactivate済み(deleted)ユーザーも含めます。省略時は除外されます。"`
+}
+
+// ListSlackUsersOutput is the structured output for list_slack_users.
+type ListSlackUsersOutput struct {
+	OK         bool                      `json:"ok"`
+	Users      []client.SlackUserSummary `json:"users"`
+	Count      int                       `json:"count"`
+	NextCursor string                    `json:"next_cursor,omitempty"`
+}
+
+// LookupSlackUserByEmailInput is the input for lookup_slack_user_by_email.
+type LookupSlackUserByEmailInput struct {
+	Email string `json:"email" jsonschema:"検索対象のメールアドレス。"`
+}
+
+// LookupSlackUserByEmailOutput is the structured output for lookup_slack_user_by_email.
+type LookupSlackUserByEmailOutput struct {
+	OK   bool                     `json:"ok"`
+	User *client.SlackUserSummary `json:"user,omitempty"`
+}
+
+// ResolveSlackUserInput is the input for resolve_slack_user.
+type ResolveSlackUserInput struct {
+	Name   string `json:"name,omitempty" jsonschema:"検索対象のユーザー名・real name・display nameのいずれか。emailが指定された場合は無視されます。"`
+	Email  string `json:"email,omitempty" jsonschema:"検索対象のメールアドレス。指定された場合はnameより優先されます。"`
+	TeamID string `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。nameでの検索時のみ利用します。"`
+}
+
+// ResolveSlackUserOutput is the structured output for resolve_slack_user. Status is
+// one of "found", "ambiguous", or "not_found"; User/Mention are set only when
+// status is "found", and Candidates only when status is "ambiguous".
+type ResolveSlackUserOutput struct {
+	OK         bool                      `json:"ok"`
+	Status     string                    `json:"status"`
+	User       *client.SlackUserSummary  `json:"user,omitempty"`
+	Mention    string                    `json:"mention,omitempty"`
+	Candidates []client.SlackUserSummary `json:"candidates,omitempty"`
 }
 
 func (t *SlackTools) postSlackMessage(ctx context.Context, _ *mcp.CallToolRequest, in PostSlackMessageInput) (*mcp.CallToolResult, PostSlackMessageOutput, error) {
@@ -191,5 +252,49 @@ func (t *SlackTools) listSlackChannels(ctx context.Context, _ *mcp.CallToolReque
 		Count:      out.Count,
 		NextCursor: out.NextCursor,
 		Sort:       out.Sort,
+	}, nil
+}
+
+func (t *SlackTools) listSlackUsers(ctx context.Context, _ *mcp.CallToolRequest, in ListSlackUsersInput) (*mcp.CallToolResult, ListSlackUsersOutput, error) {
+	out, err := t.client.ListUsers(ctx, client.ListUsersOptions{
+		Limit:          in.Limit,
+		Cursor:         in.Cursor,
+		TeamID:         in.TeamID,
+		IncludeDeleted: in.IncludeDeleted,
+		Query:          in.Query,
+	})
+	if err != nil {
+		return nil, ListSlackUsersOutput{}, err
+	}
+
+	return nil, ListSlackUsersOutput{
+		OK:         out.OK,
+		Users:      out.Users,
+		Count:      out.Count,
+		NextCursor: out.NextCursor,
+	}, nil
+}
+
+func (t *SlackTools) lookupSlackUserByEmail(ctx context.Context, _ *mcp.CallToolRequest, in LookupSlackUserByEmailInput) (*mcp.CallToolResult, LookupSlackUserByEmailOutput, error) {
+	user, err := t.client.LookupUserByEmail(ctx, in.Email)
+	if err != nil {
+		return nil, LookupSlackUserByEmailOutput{}, err
+	}
+
+	return nil, LookupSlackUserByEmailOutput{OK: true, User: user}, nil
+}
+
+func (t *SlackTools) resolveSlackUser(ctx context.Context, _ *mcp.CallToolRequest, in ResolveSlackUserInput) (*mcp.CallToolResult, ResolveSlackUserOutput, error) {
+	out, err := t.client.ResolveUser(ctx, in.Name, in.Email, in.TeamID)
+	if err != nil {
+		return nil, ResolveSlackUserOutput{}, err
+	}
+
+	return nil, ResolveSlackUserOutput{
+		OK:         out.OK,
+		Status:     out.Status,
+		User:       out.User,
+		Mention:    out.Mention,
+		Candidates: out.Candidates,
 	}, nil
 }
