@@ -8,7 +8,7 @@ AP MCP Slack is a stdio-transport MCP (Model Context Protocol) server that expos
 
 Key dependencies (see `go.mod` / README.md):
 - [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) — official Go SDK for MCP
-- [slack-go/slack](https://github.com/slack-go/slack) — Slack Web API client (chat.postMessage / chat.delete / conversations.list)
+- [slack-go/slack](https://github.com/slack-go/slack) — Slack Web API client (chat.postMessage / chat.delete / conversations.list / users.conversations / users.list / users.lookupByEmail)
 - [shouni/go-http-kit](https://github.com/shouni/go-http-kit) — HTTP client helpers (retry, SSRF/DNS-rebinding protection) used for the Incoming Webhook path
 
 ## Module
@@ -18,4 +18,4 @@ Key dependencies (see `go.mod` / README.md):
 
 ## Architecture
 
-`main.go` → `internal/app` (DI container) → `internal/builder` (server assembly) → `internal/server` (stdio MCP server). `internal/client` composes two independent transports behind `SlackClient`: `webhookTransport` (Incoming Webhook, via go-http-kit, SSRF-protected) and `webAPITransport` (token-authenticated Web API, via slack-go/slack). `internal/tools` defines the four MCP tools and delegates to `SlackClient`.
+`main.go` → `internal/app` (DI container) → `internal/builder` (server assembly) → `internal/server` (stdio MCP server). `internal/client` composes two independent transports behind `SlackClient`: `webhookTransport` (Incoming Webhook, via go-http-kit, SSRF-protected, defined in `webhook.go`) and `webAPITransport` (token-authenticated Web API, via slack-go/slack, split across `webapi.go` for messages/channels and `users.go` for user lookup; `slack.go` holds just `SlackClient`/`SlackClientConfig` and shared helpers). `internal/tools` defines the MCP tools (message post/delete, channel listing, user listing/lookup) and delegates to `SlackClient`.
