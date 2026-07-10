@@ -259,6 +259,16 @@ type ListChannelsResponse struct {
 	Sort       string                `json:"sort"`
 }
 
+// ListJoinedChannelsOptions configures Slack users.conversations requests.
+type ListJoinedChannelsOptions struct {
+	Types           []string `json:"types,omitempty"`
+	ExcludeArchived bool     `json:"exclude_archived,omitempty"`
+	Limit           int      `json:"limit,omitempty"`
+	Cursor          string   `json:"cursor,omitempty"`
+	TeamID          string   `json:"team_id,omitempty"`
+	Sort            string   `json:"sort,omitempty"`
+}
+
 // PostWebAPIMessage posts a message with Slack Web API chat.postMessage.
 func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) (*PostWebAPIMessageResponse, error) {
 	if err := w.requireToken(); err != nil {
@@ -338,6 +348,79 @@ func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOpt
 		}
 		if _, ok := seenCursors[nextCursor]; ok {
 			return nil, fmt.Errorf("slack: conversations.list returned duplicate cursor %q", nextCursor)
+		}
+		seenCursors[nextCursor] = struct{}{}
+		cursor = nextCursor
+	}
+
+	sortChannels(channels, sortBy)
+	names := channelNames(channels)
+
+	return &ListChannelsResponse{
+		OK:         true,
+		Channels:   channels,
+		Names:      names,
+		Count:      len(channels),
+		NextCursor: cursor,
+		Sort:       sortBy,
+	}, nil
+}
+
+// ListJoinedChannels lists the conversations the token owner (the calling user, for a
+// user token, or the bot, for a bot token) is a member of, through users.conversations.
+// Unlike ListChannels/conversations.list, this is scoped server-side to the caller's
+// own memberships rather than the whole workspace, so every returned channel already
+// has IsMember set.
+func (w *webAPITransport) ListJoinedChannels(ctx context.Context, opts ListJoinedChannelsOptions) (*ListChannelsResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+
+	limit, err := normalizeListLimit(opts.Limit, defaultChannelListLimit, maxChannelListLimit)
+	if err != nil {
+		return nil, err
+	}
+	types, err := normalizeChannelTypes(opts.Types)
+	if err != nil {
+		return nil, err
+	}
+	sortBy, err := normalizeChannelSort(opts.Sort)
+	if err != nil {
+		return nil, err
+	}
+
+	cursor := strings.TrimSpace(opts.Cursor)
+	teamID := strings.TrimSpace(opts.TeamID)
+	channels := make([]SlackChannelSummary, 0, limit)
+	seenCursors := map[string]struct{}{}
+
+	for len(channels) < limit {
+		requestLimit := min(channelListPageSize, limit-len(channels))
+		apiChannels, nextCursor, err := w.slackAPIClient.GetConversationsForUserContext(ctx, &slackapi.GetConversationsForUserParameters{
+			Cursor:          cursor,
+			ExcludeArchived: opts.ExcludeArchived,
+			Limit:           requestLimit,
+			Types:           types,
+			TeamID:          teamID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("slack: users.conversations failed: %w", err)
+		}
+
+		for _, channel := range apiChannels {
+			if len(channels) >= limit {
+				break
+			}
+			channels = append(channels, summarizeChannel(channel))
+		}
+
+		nextCursor = strings.TrimSpace(nextCursor)
+		if nextCursor == "" {
+			cursor = ""
+			break
+		}
+		if _, ok := seenCursors[nextCursor]; ok {
+			return nil, fmt.Errorf("slack: users.conversations returned duplicate cursor %q", nextCursor)
 		}
 		seenCursors[nextCursor] = struct{}{}
 		cursor = nextCursor
