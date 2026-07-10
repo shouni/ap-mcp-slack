@@ -116,9 +116,12 @@ ap-mcp-slack/
     ├── app/             # DI コンテナ（SlackClient・設定の集約）
     ├── builder/         # コンテナから Server を組み立てる DI
     ├── client/          # Slack Incoming Webhook / Web API クライアント
-    │   └── slack.go     # webhookTransport（Webhook投稿） / webAPITransport（Web API）
+    │   ├── slack.go     # SlackClient / SlackClientConfig とコンストラクタ
+    │   ├── webhook.go   # webhookTransport（Incoming Webhook投稿）
+    │   ├── webapi.go    # webAPITransport（メッセージ投稿/削除・チャンネル一覧）
+    │   └── users.go     # ユーザー一覧・検索・解決
     ├── tools/           # MCP ツール定義
-    │   └── slack.go     # 7ツールの入出力定義とハンドラ
+    │   └── slack.go     # 8ツールの入出力定義とハンドラ
     └── server/          # MCP stdio サーバー
 ```
 
