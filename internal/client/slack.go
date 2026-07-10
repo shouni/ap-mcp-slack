@@ -335,9 +335,6 @@ func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOpt
 		}
 
 		for _, channel := range apiChannels {
-			if len(channels) >= limit {
-				break
-			}
 			channels = append(channels, summarizeChannel(channel))
 		}
 
@@ -408,9 +405,6 @@ func (w *webAPITransport) ListJoinedChannels(ctx context.Context, opts ListJoine
 		}
 
 		for _, channel := range apiChannels {
-			if len(channels) >= limit {
-				break
-			}
 			channels = append(channels, summarizeChannel(channel))
 		}
 

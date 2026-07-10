@@ -277,6 +277,35 @@ func TestListChannelsReturnsNextCursorWhenLimitReached(t *testing.T) {
 	}
 }
 
+func TestListChannelsKeepsPageOvershoot(t *testing.T) {
+	t.Parallel()
+
+	// Slack's pagination guide notes that a page may return more items than the
+	// requested limit; the response must still include all of them instead of
+	// silently dropping the overshoot when advancing past nextCursor, since those
+	// items would otherwise never be retrievable again.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.list" {
+			t.Fatalf("path = %s, want /conversations.list", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C001","name":"alpha","created":10,"is_channel":true},{"id":"C002","name":"beta","created":20,"is_channel":true}],"response_metadata":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListChannels(context.Background(), ListChannelsOptions{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListChannels() error = %v", err)
+	}
+	if resp.Count != 2 {
+		t.Fatalf("response = %+v, want count 2 (overshoot kept, not dropped)", resp)
+	}
+}
+
 func TestListChannelsValidatesInputs(t *testing.T) {
 	t.Parallel()
 
@@ -367,6 +396,31 @@ func TestListJoinedChannels(t *testing.T) {
 	}
 	if requests[1].Cursor != "cursor-2" || requests[1].Limit != "1" {
 		t.Fatalf("second request = %+v", requests[1])
+	}
+}
+
+func TestListJoinedChannelsKeepsPageOvershoot(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/users.conversations" {
+			t.Fatalf("path = %s, want /users.conversations", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C001","name":"alpha","created":10,"is_channel":true,"is_member":true},{"id":"C002","name":"beta","created":20,"is_channel":true,"is_member":true}],"response_metadata":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListJoinedChannels() error = %v", err)
+	}
+	if resp.Count != 2 {
+		t.Fatalf("response = %+v, want count 2 (overshoot kept, not dropped)", resp)
 	}
 }
 
