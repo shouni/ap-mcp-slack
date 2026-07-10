@@ -223,16 +223,16 @@ func (w *webAPITransport) ListJoinedChannels(ctx context.Context, opts ListJoine
 
 // normalizeChannelListParams validates and applies defaults to the limit/types/sort
 // options shared by ListChannels and ListJoinedChannels.
-func normalizeChannelListParams(rawLimit int, rawTypes []string, rawSort string) (limit int, types []string, sortBy string, err error) {
-	limit, err = normalizeListLimit(rawLimit, defaultChannelListLimit, maxChannelListLimit)
+func normalizeChannelListParams(rawLimit int, rawTypes []string, rawSort string) (int, []string, string, error) {
+	limit, err := normalizeListLimit(rawLimit, defaultChannelListLimit, maxChannelListLimit)
 	if err != nil {
 		return 0, nil, "", err
 	}
-	types, err = normalizeChannelTypes(rawTypes)
+	types, err := normalizeChannelTypes(rawTypes)
 	if err != nil {
 		return 0, nil, "", err
 	}
-	sortBy, err = normalizeChannelSort(rawSort)
+	sortBy, err := normalizeChannelSort(rawSort)
 	if err != nil {
 		return 0, nil, "", err
 	}
