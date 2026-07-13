@@ -15,6 +15,8 @@ const (
 	defaultChannelListLimit = 200
 	maxChannelListLimit     = 1000
 	channelListPageSize     = 200
+	defaultMessageListLimit = 100
+	maxMessageListLimit     = 1000
 )
 
 // Sort values accepted by list_slack_channels' sort option.
@@ -79,6 +81,25 @@ type PostWebAPIMessageResponse struct {
 	TS        string `json:"ts,omitempty"`
 }
 
+// PreviewWebAPIMessage builds the chat.postMessage payload without sending it.
+func (w *webAPITransport) PreviewWebAPIMessage(msg WebAPIMessage) (WebAPIMessage, error) {
+	if strings.TrimSpace(msg.Text) == "" {
+		return WebAPIMessage{}, fmt.Errorf("slack: text is required")
+	}
+	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
+	if msg.ChannelID == "" {
+		return WebAPIMessage{}, fmt.Errorf("slack: channel_id is required")
+	}
+	msg.Blocks = appendRawSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
+	if _, err := convertBlocks(msg.Blocks); err != nil {
+		return WebAPIMessage{}, err
+	}
+	if _, err := convertAttachments(msg.Attachments); err != nil {
+		return WebAPIMessage{}, err
+	}
+	return msg, nil
+}
+
 // DeleteWebAPIMessageResponse contains the relevant chat.delete response fields.
 type DeleteWebAPIMessageResponse struct {
 	OK        bool   `json:"ok"`
@@ -135,6 +156,59 @@ type ListJoinedChannelsOptions struct {
 	Cursor          string   `json:"cursor,omitempty"`
 	TeamID          string   `json:"team_id,omitempty"`
 	Sort            string   `json:"sort,omitempty"`
+}
+
+// ConversationHistoryOptions configures Slack conversations.history requests.
+type ConversationHistoryOptions struct {
+	ChannelID          string `json:"channel_id,omitempty"`
+	Limit              int    `json:"limit,omitempty"`
+	Cursor             string `json:"cursor,omitempty"`
+	Oldest             string `json:"oldest,omitempty"`
+	Latest             string `json:"latest,omitempty"`
+	Inclusive          bool   `json:"inclusive,omitempty"`
+	IncludeAllMetadata bool   `json:"include_all_metadata,omitempty"`
+}
+
+// ConversationRepliesOptions configures Slack conversations.replies requests.
+type ConversationRepliesOptions struct {
+	ChannelID          string `json:"channel_id,omitempty"`
+	TS                 string `json:"ts,omitempty"`
+	Limit              int    `json:"limit,omitempty"`
+	Cursor             string `json:"cursor,omitempty"`
+	Oldest             string `json:"oldest,omitempty"`
+	Latest             string `json:"latest,omitempty"`
+	Inclusive          bool   `json:"inclusive,omitempty"`
+	IncludeAllMetadata bool   `json:"include_all_metadata,omitempty"`
+}
+
+// SlackMessageSummary contains the message fields returned by history/replies tools.
+type SlackMessageSummary struct {
+	Type     string `json:"type,omitempty"`
+	SubType  string `json:"subtype,omitempty"`
+	User     string `json:"user,omitempty"`
+	BotID    string `json:"bot_id,omitempty"`
+	Username string `json:"username,omitempty"`
+	Text     string `json:"text,omitempty"`
+	// Blocks and Attachments carry the Block Kit / attachment payload for messages
+	// whose content lives there rather than in Text (e.g. most bot/app messages).
+	Blocks      any `json:"blocks,omitempty"`
+	Attachments any `json:"attachments,omitempty"`
+	// Metadata is only populated when the caller sets IncludeAllMetadata.
+	Metadata   any      `json:"metadata,omitempty"`
+	TS         string   `json:"ts,omitempty"`
+	ThreadTS   string   `json:"thread_ts,omitempty"`
+	ParentUser string   `json:"parent_user_id,omitempty"`
+	ReplyCount int      `json:"reply_count,omitempty"`
+	ReplyUsers []string `json:"reply_users,omitempty"`
+}
+
+// ConversationMessagesResponse contains the relevant conversations.history/replies response fields.
+type ConversationMessagesResponse struct {
+	OK         bool                  `json:"ok"`
+	Messages   []SlackMessageSummary `json:"messages"`
+	Count      int                   `json:"count"`
+	HasMore    bool                  `json:"has_more"`
+	NextCursor string                `json:"next_cursor,omitempty"`
 }
 
 // PostWebAPIMessage posts a message with Slack Web API chat.postMessage.
@@ -219,6 +293,83 @@ func (w *webAPITransport) ListJoinedChannels(ctx context.Context, opts ListJoine
 				TeamID:          teamID,
 			})
 		})
+}
+
+// GetConversationHistory fetches messages from a Slack conversation with conversations.history.
+func (w *webAPITransport) GetConversationHistory(ctx context.Context, opts ConversationHistoryOptions) (*ConversationMessagesResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+	channelID := w.channelIDOrDefault(opts.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("slack: channel_id is required")
+	}
+	limit, err := normalizeListLimit(opts.Limit, defaultMessageListLimit, maxMessageListLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := w.slackAPIClient.GetConversationHistoryContext(ctx, &slackapi.GetConversationHistoryParameters{
+		ChannelID:          channelID,
+		Cursor:             strings.TrimSpace(opts.Cursor),
+		Inclusive:          opts.Inclusive,
+		Latest:             strings.TrimSpace(opts.Latest),
+		Limit:              limit,
+		Oldest:             strings.TrimSpace(opts.Oldest),
+		IncludeAllMetadata: opts.IncludeAllMetadata,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("slack: conversations.history failed: %w", err)
+	}
+	messages := summarizeMessages(resp.Messages)
+	return &ConversationMessagesResponse{
+		OK:         true,
+		Messages:   messages,
+		Count:      len(messages),
+		HasMore:    resp.HasMore,
+		NextCursor: strings.TrimSpace(resp.ResponseMetaData.NextCursor),
+	}, nil
+}
+
+// GetConversationReplies fetches the thread rooted at TS with conversations.replies.
+func (w *webAPITransport) GetConversationReplies(ctx context.Context, opts ConversationRepliesOptions) (*ConversationMessagesResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+	channelID := w.channelIDOrDefault(opts.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("slack: channel_id is required")
+	}
+	ts := strings.TrimSpace(opts.TS)
+	if ts == "" {
+		return nil, fmt.Errorf("slack: ts is required")
+	}
+	limit, err := normalizeListLimit(opts.Limit, defaultMessageListLimit, maxMessageListLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	apiMessages, hasMore, nextCursor, err := w.slackAPIClient.GetConversationRepliesContext(ctx, &slackapi.GetConversationRepliesParameters{
+		ChannelID:          channelID,
+		Timestamp:          ts,
+		Cursor:             strings.TrimSpace(opts.Cursor),
+		Inclusive:          opts.Inclusive,
+		Latest:             strings.TrimSpace(opts.Latest),
+		Limit:              limit,
+		Oldest:             strings.TrimSpace(opts.Oldest),
+		IncludeAllMetadata: opts.IncludeAllMetadata,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("slack: conversations.replies failed: %w", err)
+	}
+	messages := summarizeMessages(apiMessages)
+	return &ConversationMessagesResponse{
+		OK:         true,
+		Messages:   messages,
+		Count:      len(messages),
+		HasMore:    hasMore,
+		NextCursor: strings.TrimSpace(nextCursor),
+	}, nil
 }
 
 // normalizeChannelListParams validates and applies defaults to the limit/types/sort
@@ -393,6 +544,36 @@ func summarizeChannel(channel slackapi.Channel) SlackChannelSummary {
 		IsExtShared:    channel.IsExtShared,
 		IsOrgShared:    channel.IsOrgShared,
 	}
+}
+
+func summarizeMessages(messages []slackapi.Message) []SlackMessageSummary {
+	out := make([]SlackMessageSummary, 0, len(messages))
+	for _, message := range messages {
+		summary := SlackMessageSummary{
+			Type:       message.Type,
+			SubType:    message.SubType,
+			User:       message.User,
+			BotID:      message.BotID,
+			Username:   message.Username,
+			Text:       message.Text,
+			TS:         message.Timestamp,
+			ThreadTS:   message.ThreadTimestamp,
+			ParentUser: message.ParentUserId,
+			ReplyCount: message.ReplyCount,
+			ReplyUsers: message.ReplyUsers,
+		}
+		if len(message.Blocks.BlockSet) > 0 {
+			summary.Blocks = message.Blocks.BlockSet
+		}
+		if len(message.Attachments) > 0 {
+			summary.Attachments = message.Attachments
+		}
+		if message.Metadata.EventType != "" {
+			summary.Metadata = message.Metadata
+		}
+		out = append(out, summary)
+	}
+	return out
 }
 
 func sortChannels(channels []SlackChannelSummary, sortBy string) {

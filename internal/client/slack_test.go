@@ -21,9 +21,14 @@ import (
 // wouldn't actually panic, but a real, well-formed value keeps that true even if a
 // future caller extends this helper to exercise Web API methods too.
 func newTestWebhookClient(webhookURL string) *SlackClient {
+	return newTestWebhookClientWithSourceLabel(webhookURL, "")
+}
+
+func newTestWebhookClientWithSourceLabel(webhookURL, sourceLabel string) *SlackClient {
 	return &SlackClient{
 		webhookTransport: webhookTransport{
 			webhookURL:    webhookURL,
+			sourceLabel:   sourceLabel,
 			httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry(), httpkit.WithSkipNetworkValidation(true)),
 		},
 		webAPITransport: newWebAPITransport(SlackClientConfig{}),
@@ -72,6 +77,66 @@ func TestPostMessage(t *testing.T) {
 	}
 	if len(got.Blocks) != 1 {
 		t.Fatalf("Blocks length = %d, want 1", len(got.Blocks))
+	}
+}
+
+func TestPostMessageAppendsSourceLabelBlock(t *testing.T) {
+	t.Parallel()
+
+	var got Message
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	client := newTestWebhookClientWithSourceLabel(server.URL, "ap-mcp-slack (MCP) 経由")
+	resp, err := client.PostMessage(context.Background(), Message{Text: "*hello* <@shouni>"})
+	if err != nil {
+		t.Fatalf("PostMessage() error = %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || resp.Body != "ok" {
+		t.Fatalf("response = %+v, want status 200 body ok", resp)
+	}
+	if len(got.Blocks) != 2 {
+		t.Fatalf("Blocks length = %d, want 2", len(got.Blocks))
+	}
+	if got.Blocks[0]["type"] != "section" {
+		t.Fatalf("first block = %+v, want section", got.Blocks[0])
+	}
+	if got.Blocks[1]["type"] != "context" {
+		t.Fatalf("last block = %+v, want context", got.Blocks[1])
+	}
+	elements, ok := got.Blocks[1]["elements"].([]any)
+	if !ok || len(elements) != 1 {
+		t.Fatalf("context elements = %#v, want one element", got.Blocks[1]["elements"])
+	}
+	element, ok := elements[0].(map[string]any)
+	if !ok || element["text"] != "ap-mcp-slack (MCP) 経由" {
+		t.Fatalf("context element = %#v, want source label", elements[0])
+	}
+}
+
+func TestPreviewMessageBuildsPayloadWithoutWebhookURL(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		SourceLabel: "ap-mcp-slack (MCP) 経由",
+	})
+	payload, err := client.PreviewMessage(Message{Text: "*hello* <@shouni>"})
+	if err != nil {
+		t.Fatalf("PreviewMessage() error = %v", err)
+	}
+	if payload.Text != "*hello* <@shouni>" {
+		t.Fatalf("Text = %q, want input text", payload.Text)
+	}
+	if len(payload.Blocks) != 2 {
+		t.Fatalf("Blocks length = %d, want 2", len(payload.Blocks))
+	}
+	if payload.Blocks[0]["type"] != "section" || payload.Blocks[1]["type"] != "context" {
+		t.Fatalf("Blocks = %+v, want section and context", payload.Blocks)
 	}
 }
 
@@ -176,6 +241,41 @@ func TestPostWebAPIMessageReturnsSlackError(t *testing.T) {
 	})
 	if _, err := client.PostWebAPIMessage(context.Background(), WebAPIMessage{Text: "hello"}); err == nil {
 		t.Fatal("PostWebAPIMessage() error = nil, want error")
+	}
+}
+
+func TestPreviewWebAPIMessageBuildsPayloadWithoutToken(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		DefaultChannelID: " C123 ",
+		SourceLabel:      "ap-mcp-slack (MCP) 経由",
+	})
+	payload, err := client.PreviewWebAPIMessage(WebAPIMessage{
+		Text:      "*hello* <@shouni>",
+		ThreadTS:  "123.456",
+		IconEmoji: ":robot_face:",
+	})
+	if err != nil {
+		t.Fatalf("PreviewWebAPIMessage() error = %v", err)
+	}
+	if payload.ChannelID != "C123" || payload.Text != "*hello* <@shouni>" || payload.ThreadTS != "123.456" || payload.IconEmoji != ":robot_face:" {
+		t.Fatalf("payload = %+v", payload)
+	}
+	if len(payload.Blocks) != 2 {
+		t.Fatalf("Blocks length = %d, want 2", len(payload.Blocks))
+	}
+	if payload.Blocks[0]["type"] != "section" || payload.Blocks[1]["type"] != "context" {
+		t.Fatalf("Blocks = %+v, want section and context", payload.Blocks)
+	}
+}
+
+func TestPreviewWebAPIMessageValidatesChannel(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{})
+	if _, err := client.PreviewWebAPIMessage(WebAPIMessage{Text: "hello"}); err == nil {
+		t.Fatal("PreviewWebAPIMessage() error = nil, want channel error")
 	}
 }
 
@@ -441,6 +541,121 @@ func TestListJoinedChannelsValidatesInputs(t *testing.T) {
 	}
 	if _, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{Limit: maxChannelListLimit + 1}); err == nil {
 		t.Fatal("ListJoinedChannels() error = nil, want limit error")
+	}
+}
+
+func TestGetConversationHistory(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.history" {
+			t.Fatalf("path = %s, want /conversations.history", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		got = map[string]string{
+			"token":                r.Form.Get("token"),
+			"channel":              r.Form.Get("channel"),
+			"limit":                r.Form.Get("limit"),
+			"cursor":               r.Form.Get("cursor"),
+			"oldest":               r.Form.Get("oldest"),
+			"latest":               r.Form.Get("latest"),
+			"inclusive":            r.Form.Get("inclusive"),
+			"include_all_metadata": r.Form.Get("include_all_metadata"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U001","text":"parent","ts":"1700000000.000100","thread_ts":"1700000000.000100","reply_count":2,"reply_users":["U002"]},{"type":"message","subtype":"bot_message","bot_id":"B001","username":"mk","text":"bot","ts":"1700000001.000100"}],"has_more":true,"response_metadata":{"next_cursor":"cursor-2"}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:            "xoxp-test",
+		DefaultChannelID: "C123",
+		APIBaseURL:       server.URL,
+	})
+	resp, err := client.GetConversationHistory(context.Background(), ConversationHistoryOptions{
+		Limit:              2,
+		Cursor:             "cursor-1",
+		Oldest:             "1699999999.000100",
+		Latest:             "1700000100.000100",
+		Inclusive:          true,
+		IncludeAllMetadata: true,
+	})
+	if err != nil {
+		t.Fatalf("GetConversationHistory() error = %v", err)
+	}
+	if !resp.OK || resp.Count != 2 || !resp.HasMore || resp.NextCursor != "cursor-2" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Messages[0].TS != "1700000000.000100" || resp.Messages[0].ReplyCount != 2 || len(resp.Messages[0].ReplyUsers) != 1 {
+		t.Fatalf("first message = %+v", resp.Messages[0])
+	}
+	if got["token"] != "xoxp-test" || got["channel"] != "C123" || got["limit"] != "2" || got["cursor"] != "cursor-1" || got["inclusive"] != "1" || got["include_all_metadata"] != "1" {
+		t.Fatalf("payload = %+v", got)
+	}
+}
+
+func TestGetConversationReplies(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.replies" {
+			t.Fatalf("path = %s, want /conversations.replies", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		got = map[string]string{
+			"token":   r.Form.Get("token"),
+			"channel": r.Form.Get("channel"),
+			"ts":      r.Form.Get("ts"),
+			"limit":   r.Form.Get("limit"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U001","text":"parent","ts":"1700000000.000100","thread_ts":"1700000000.000100"},{"type":"message","user":"U002","text":"reply","ts":"1700000001.000100","thread_ts":"1700000000.000100","parent_user_id":"U001"}],"has_more":false,"response_metadata":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{
+		ChannelID: "C123",
+		TS:        "1700000000.000100",
+		Limit:     2,
+	})
+	if err != nil {
+		t.Fatalf("GetConversationReplies() error = %v", err)
+	}
+	if !resp.OK || resp.Count != 2 || resp.HasMore {
+		t.Fatalf("response = %+v", resp)
+	}
+	if resp.Messages[1].ParentUser != "U001" || resp.Messages[1].ThreadTS != "1700000000.000100" {
+		t.Fatalf("reply = %+v", resp.Messages[1])
+	}
+	if got["token"] != "xoxp-test" || got["channel"] != "C123" || got["ts"] != "1700000000.000100" || got["limit"] != "2" {
+		t.Fatalf("payload = %+v", got)
+	}
+}
+
+func TestGetConversationRepliesValidatesInputs(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{})
+	if _, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{}); err == nil {
+		t.Fatal("GetConversationReplies() error = nil, want token error")
+	}
+
+	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
+	if _, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{ChannelID: "C123"}); err == nil {
+		t.Fatal("GetConversationReplies() error = nil, want ts error")
+	}
+	if _, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{ChannelID: "C123", TS: "1700000000.000100", Limit: maxMessageListLimit + 1}); err == nil {
+		t.Fatal("GetConversationReplies() error = nil, want limit error")
 	}
 }
 

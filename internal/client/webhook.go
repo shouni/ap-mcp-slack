@@ -18,6 +18,7 @@ import (
 // fixed ceiling; a real Slack incoming webhook only ever returns a few bytes.
 type webhookTransport struct {
 	webhookURL    string
+	sourceLabel   string
 	httpKitClient *httpkit.Client
 }
 
@@ -29,6 +30,7 @@ func newWebhookTransport(cfg SlackClientConfig) webhookTransport {
 	// production constructor, so there's no config flag that could flip it off.
 	return webhookTransport{
 		webhookURL:    strings.TrimSpace(cfg.WebhookURL),
+		sourceLabel:   strings.TrimSpace(cfg.SourceLabel),
 		httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry()),
 	}
 }
@@ -50,13 +52,23 @@ type PostMessageResponse struct {
 	Body       string `json:"body"`
 }
 
+// PreviewMessage builds the webhook payload without sending it.
+func (w *webhookTransport) PreviewMessage(msg Message) (Message, error) {
+	if strings.TrimSpace(msg.Text) == "" {
+		return Message{}, fmt.Errorf("slack: text is required")
+	}
+	msg.Blocks = appendRawSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
+	return msg, nil
+}
+
 // PostMessage posts a message to Slack.
 func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostMessageResponse, error) {
 	if w.webhookURL == "" {
 		return nil, fmt.Errorf("slack: webhook URL is required")
 	}
-	if strings.TrimSpace(msg.Text) == "" {
-		return nil, fmt.Errorf("slack: text is required")
+	msg, err := w.PreviewMessage(msg)
+	if err != nil {
+		return nil, err
 	}
 
 	responseBody, err := w.httpKitClient.PostJSONAndFetchBytes(ctx, w.webhookURL, msg)
