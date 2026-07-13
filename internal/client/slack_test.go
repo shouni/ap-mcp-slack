@@ -654,8 +654,8 @@ func TestGetConversationRepliesValidatesInputs(t *testing.T) {
 	if _, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{ChannelID: "C123"}); err == nil {
 		t.Fatal("GetConversationReplies() error = nil, want ts error")
 	}
-	if _, err := client.GetConversationHistory(context.Background(), ConversationHistoryOptions{ChannelID: "C123", Limit: maxMessageListLimit + 1}); err == nil {
-		t.Fatal("GetConversationHistory() error = nil, want limit error")
+	if _, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{ChannelID: "C123", TS: "1700000000.000100", Limit: maxMessageListLimit + 1}); err == nil {
+		t.Fatal("GetConversationReplies() error = nil, want limit error")
 	}
 }
 

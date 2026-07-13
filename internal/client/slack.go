@@ -3,6 +3,7 @@ package client
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -56,4 +57,33 @@ func normalizeListLimit(limit, defaultLimit, maxLimit int) (int, error) {
 		return 0, fmt.Errorf("slack: limit must be %d or less", maxLimit)
 	}
 	return limit, nil
+}
+
+// appendRawSourceLabelBlock appends a Block Kit context footer carrying sourceLabel,
+// shared by both the webhook and Web API message payload builders.
+func appendRawSourceLabelBlock(blocks []map[string]any, text, sourceLabel string) []map[string]any {
+	sourceLabel = strings.TrimSpace(sourceLabel)
+	if sourceLabel == "" {
+		return blocks
+	}
+
+	if len(blocks) == 0 && strings.TrimSpace(text) != "" {
+		blocks = append(blocks, map[string]any{
+			"type": "section",
+			"text": map[string]any{
+				"type": "mrkdwn",
+				"text": text,
+			},
+		})
+	}
+
+	return append(blocks, map[string]any{
+		"type": "context",
+		"elements": []map[string]any{
+			{
+				"type": "mrkdwn",
+				"text": sourceLabel,
+			},
+		},
+	})
 }

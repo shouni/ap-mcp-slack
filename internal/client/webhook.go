@@ -84,30 +84,3 @@ func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostM
 		Body:       strings.TrimSpace(string(responseBody)),
 	}, nil
 }
-
-func appendRawSourceLabelBlock(blocks []map[string]any, text, sourceLabel string) []map[string]any {
-	sourceLabel = strings.TrimSpace(sourceLabel)
-	if sourceLabel == "" {
-		return blocks
-	}
-
-	if len(blocks) == 0 && strings.TrimSpace(text) != "" {
-		blocks = append(blocks, map[string]any{
-			"type": "section",
-			"text": map[string]any{
-				"type": "mrkdwn",
-				"text": text,
-			},
-		})
-	}
-
-	return append(blocks, map[string]any{
-		"type": "context",
-		"elements": []map[string]any{
-			{
-				"type": "mrkdwn",
-				"text": sourceLabel,
-			},
-		},
-	})
-}
