@@ -22,9 +22,19 @@ func NewSlackTools(c *client.SlackClient) *SlackTools {
 // Register registers Slack tools on the MCP server.
 func (t *SlackTools) Register(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "preview_slack_message",
+		Description: "post_slack_message で送信される Slack Incoming Webhook payload を、Slackへ投稿せずに確認します。",
+	}, t.previewSlackMessage)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message",
 		Description: "MCP_SLACK_WEBHOOK_URL の Slack Incoming Webhook にメッセージを投稿します。",
 	}, t.postSlackMessage)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "preview_slack_message_as_user",
+		Description: "post_slack_message_as_user で送信される Slack Web API chat.postMessage payload を、Slackへ投稿せずに確認します。",
+	}, t.previewSlackMessageAsUser)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message_as_user",
@@ -45,6 +55,16 @@ func (t *SlackTools) Register(server *mcp.Server) {
 		Name:        "list_joined_slack_channels",
 		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API users.conversations でトークン所有者が参加しているチャンネル一覧のみを取得します（サーバー側でメンバーシップに絞り込まれます）。MCP_SLACK_USER_TOKEN（ユーザートークン）を設定している場合はそのユーザー本人が参加しているチャンネル、ボットトークンのみの場合はそのボットが参加しているチャンネルが対象です。",
 	}, t.listJoinedSlackChannels)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_slack_channel_history",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.history でチャンネルのメッセージ履歴を取得します。public channel は channels:history、private channel は groups:history スコープが必要です。",
+	}, t.getSlackChannelHistory)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_slack_thread_replies",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.replies で指定メッセージのスレッド返信を取得します。public channel は channels:history、private channel は groups:history スコープが必要です。",
+	}, t.getSlackThreadReplies)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_slack_users",
@@ -88,6 +108,13 @@ type PostSlackMessageOutput struct {
 	Body       string `json:"body,omitempty"`
 }
 
+// PreviewSlackMessageOutput is the structured output for preview_slack_message.
+type PreviewSlackMessageOutput struct {
+	OK        bool           `json:"ok"`
+	Transport string         `json:"transport"`
+	Payload   client.Message `json:"payload"`
+}
+
 // PostSlackMessageAsUserInput is the input for post_slack_message_as_user.
 type PostSlackMessageAsUserInput struct {
 	ChannelID string `json:"channel_id,omitempty" jsonschema:"投稿先チャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
@@ -100,6 +127,14 @@ type PostSlackMessageAsUserOutput struct {
 	OK        bool   `json:"ok"`
 	ChannelID string `json:"channel_id,omitempty"`
 	TS        string `json:"ts,omitempty"`
+}
+
+// PreviewSlackMessageAsUserOutput is the structured output for preview_slack_message_as_user.
+type PreviewSlackMessageAsUserOutput struct {
+	OK        bool                 `json:"ok"`
+	Transport string               `json:"transport"`
+	ChannelID string               `json:"channel_id"`
+	Payload   client.WebAPIMessage `json:"payload"`
 }
 
 // DeleteSlackMessageInput is the input for delete_slack_message.
@@ -155,6 +190,38 @@ type ListJoinedSlackChannelsOutput struct {
 	Sort       string                       `json:"sort"`
 }
 
+// GetSlackChannelHistoryInput is the input for get_slack_channel_history.
+type GetSlackChannelHistoryInput struct {
+	ChannelID          string `json:"channel_id,omitempty" jsonschema:"取得対象チャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
+	Limit              int    `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は100、最大1000です。"`
+	Cursor             string `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
+	Oldest             string `json:"oldest,omitempty" jsonschema:"このUnix timestampより後のメッセージのみ取得します。例: 1700000000.000100"`
+	Latest             string `json:"latest,omitempty" jsonschema:"このUnix timestampより前のメッセージのみ取得します。例: 1700000000.000100"`
+	Inclusive          bool   `json:"inclusive,omitempty" jsonschema:"oldest/latest と同じtimestampのメッセージも含めます。"`
+	IncludeAllMetadata bool   `json:"include_all_metadata,omitempty" jsonschema:"trueの場合、Slackのメッセージメタデータも取得対象にします。"`
+}
+
+// GetSlackThreadRepliesInput is the input for get_slack_thread_replies.
+type GetSlackThreadRepliesInput struct {
+	ChannelID          string `json:"channel_id,omitempty" jsonschema:"取得対象チャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
+	TS                 string `json:"ts" jsonschema:"親メッセージのts。返信メッセージのtsではなくスレッド親のtsを指定してください。"`
+	Limit              int    `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は100、最大1000です。"`
+	Cursor             string `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
+	Oldest             string `json:"oldest,omitempty" jsonschema:"このUnix timestampより後の返信のみ取得します。例: 1700000000.000100"`
+	Latest             string `json:"latest,omitempty" jsonschema:"このUnix timestampより前の返信のみ取得します。例: 1700000000.000100"`
+	Inclusive          bool   `json:"inclusive,omitempty" jsonschema:"oldest/latest と同じtimestampの返信も含めます。"`
+	IncludeAllMetadata bool   `json:"include_all_metadata,omitempty" jsonschema:"trueの場合、Slackのメッセージメタデータも取得対象にします。"`
+}
+
+// GetSlackMessagesOutput is the structured output for history/replies tools.
+type GetSlackMessagesOutput struct {
+	OK         bool                         `json:"ok"`
+	Messages   []client.SlackMessageSummary `json:"messages"`
+	Count      int                          `json:"count"`
+	HasMore    bool                         `json:"has_more"`
+	NextCursor string                       `json:"next_cursor,omitempty"`
+}
+
 // ListSlackUsersInput is the input for list_slack_users.
 type ListSlackUsersInput struct {
 	Query          string `json:"query,omitempty" jsonschema:"name / real_name / display_name / email に対する部分一致検索クエリ（大文字小文字を区別しません）。"`
@@ -201,6 +268,27 @@ type ResolveSlackUserOutput struct {
 	Candidates []client.SlackUserSummary `json:"candidates,omitempty"`
 }
 
+func (t *SlackTools) previewSlackMessage(_ context.Context, _ *mcp.CallToolRequest, in PostSlackMessageInput) (*mcp.CallToolResult, PreviewSlackMessageOutput, error) {
+	payload, err := t.client.PreviewMessage(client.Message{
+		Text:        in.Text,
+		Blocks:      in.Blocks,
+		Attachments: in.Attachments,
+		ThreadTS:    in.ThreadTS,
+		IconEmoji:   in.IconEmoji,
+		UnfurlLinks: in.UnfurlLinks,
+		UnfurlMedia: in.UnfurlMedia,
+	})
+	if err != nil {
+		return nil, PreviewSlackMessageOutput{}, err
+	}
+
+	return nil, PreviewSlackMessageOutput{
+		OK:        true,
+		Transport: "webhook",
+		Payload:   payload,
+	}, nil
+}
+
 func (t *SlackTools) postSlackMessage(ctx context.Context, _ *mcp.CallToolRequest, in PostSlackMessageInput) (*mcp.CallToolResult, PostSlackMessageOutput, error) {
 	out, err := t.client.PostMessage(ctx, client.Message{
 		Text:        in.Text,
@@ -219,6 +307,29 @@ func (t *SlackTools) postSlackMessage(ctx context.Context, _ *mcp.CallToolReques
 		OK:         true,
 		StatusCode: out.StatusCode,
 		Body:       out.Body,
+	}, nil
+}
+
+func (t *SlackTools) previewSlackMessageAsUser(_ context.Context, _ *mcp.CallToolRequest, in PostSlackMessageAsUserInput) (*mcp.CallToolResult, PreviewSlackMessageAsUserOutput, error) {
+	payload, err := t.client.PreviewWebAPIMessage(client.WebAPIMessage{
+		ChannelID:   in.ChannelID,
+		Text:        in.Text,
+		Blocks:      in.Blocks,
+		Attachments: in.Attachments,
+		ThreadTS:    in.ThreadTS,
+		IconEmoji:   in.IconEmoji,
+		UnfurlLinks: in.UnfurlLinks,
+		UnfurlMedia: in.UnfurlMedia,
+	})
+	if err != nil {
+		return nil, PreviewSlackMessageAsUserOutput{}, err
+	}
+
+	return nil, PreviewSlackMessageAsUserOutput{
+		OK:        true,
+		Transport: "web_api",
+		ChannelID: payload.ChannelID,
+		Payload:   payload,
 	}, nil
 }
 
@@ -300,6 +411,53 @@ func (t *SlackTools) listJoinedSlackChannels(ctx context.Context, _ *mcp.CallToo
 		Count:      out.Count,
 		NextCursor: out.NextCursor,
 		Sort:       out.Sort,
+	}, nil
+}
+
+func (t *SlackTools) getSlackChannelHistory(ctx context.Context, _ *mcp.CallToolRequest, in GetSlackChannelHistoryInput) (*mcp.CallToolResult, GetSlackMessagesOutput, error) {
+	out, err := t.client.GetConversationHistory(ctx, client.ConversationHistoryOptions{
+		ChannelID:          in.ChannelID,
+		Limit:              in.Limit,
+		Cursor:             in.Cursor,
+		Oldest:             in.Oldest,
+		Latest:             in.Latest,
+		Inclusive:          in.Inclusive,
+		IncludeAllMetadata: in.IncludeAllMetadata,
+	})
+	if err != nil {
+		return nil, GetSlackMessagesOutput{}, err
+	}
+
+	return nil, GetSlackMessagesOutput{
+		OK:         out.OK,
+		Messages:   out.Messages,
+		Count:      out.Count,
+		HasMore:    out.HasMore,
+		NextCursor: out.NextCursor,
+	}, nil
+}
+
+func (t *SlackTools) getSlackThreadReplies(ctx context.Context, _ *mcp.CallToolRequest, in GetSlackThreadRepliesInput) (*mcp.CallToolResult, GetSlackMessagesOutput, error) {
+	out, err := t.client.GetConversationReplies(ctx, client.ConversationRepliesOptions{
+		ChannelID:          in.ChannelID,
+		TS:                 in.TS,
+		Limit:              in.Limit,
+		Cursor:             in.Cursor,
+		Oldest:             in.Oldest,
+		Latest:             in.Latest,
+		Inclusive:          in.Inclusive,
+		IncludeAllMetadata: in.IncludeAllMetadata,
+	})
+	if err != nil {
+		return nil, GetSlackMessagesOutput{}, err
+	}
+
+	return nil, GetSlackMessagesOutput{
+		OK:         out.OK,
+		Messages:   out.Messages,
+		Count:      out.Count,
+		HasMore:    out.HasMore,
+		NextCursor: out.NextCursor,
 	}, nil
 }
 

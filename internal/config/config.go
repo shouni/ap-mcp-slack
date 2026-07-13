@@ -6,10 +6,8 @@ import (
 	"strings"
 )
 
-// defaultSlackSourceLabel is appended to Web API ("post as user") messages so they
-// remain distinguishable from messages the user posts by hand: a user token makes
-// chat.postMessage post under the user's own name/avatar, with none of the "APP"
-// badge or bot identity that would otherwise set MCP-originated posts apart.
+// defaultSlackSourceLabel is appended to Slack posts so MCP-originated messages stay
+// distinguishable from messages the user posts by hand.
 const defaultSlackSourceLabel = "ap-mcp-slack (MCP) 経由"
 
 // Config holds application settings.
