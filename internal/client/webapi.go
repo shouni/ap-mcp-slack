@@ -183,12 +183,18 @@ type ConversationRepliesOptions struct {
 
 // SlackMessageSummary contains the message fields returned by history/replies tools.
 type SlackMessageSummary struct {
-	Type       string   `json:"type,omitempty"`
-	SubType    string   `json:"subtype,omitempty"`
-	User       string   `json:"user,omitempty"`
-	BotID      string   `json:"bot_id,omitempty"`
-	Username   string   `json:"username,omitempty"`
-	Text       string   `json:"text,omitempty"`
+	Type     string `json:"type,omitempty"`
+	SubType  string `json:"subtype,omitempty"`
+	User     string `json:"user,omitempty"`
+	BotID    string `json:"bot_id,omitempty"`
+	Username string `json:"username,omitempty"`
+	Text     string `json:"text,omitempty"`
+	// Blocks and Attachments carry the Block Kit / attachment payload for messages
+	// whose content lives there rather than in Text (e.g. most bot/app messages).
+	Blocks      any `json:"blocks,omitempty"`
+	Attachments any `json:"attachments,omitempty"`
+	// Metadata is only populated when the caller sets IncludeAllMetadata.
+	Metadata   any      `json:"metadata,omitempty"`
 	TS         string   `json:"ts,omitempty"`
 	ThreadTS   string   `json:"thread_ts,omitempty"`
 	ParentUser string   `json:"parent_user_id,omitempty"`
@@ -543,7 +549,7 @@ func summarizeChannel(channel slackapi.Channel) SlackChannelSummary {
 func summarizeMessages(messages []slackapi.Message) []SlackMessageSummary {
 	out := make([]SlackMessageSummary, 0, len(messages))
 	for _, message := range messages {
-		out = append(out, SlackMessageSummary{
+		summary := SlackMessageSummary{
 			Type:       message.Type,
 			SubType:    message.SubType,
 			User:       message.User,
@@ -555,7 +561,17 @@ func summarizeMessages(messages []slackapi.Message) []SlackMessageSummary {
 			ParentUser: message.ParentUserId,
 			ReplyCount: message.ReplyCount,
 			ReplyUsers: message.ReplyUsers,
-		})
+		}
+		if len(message.Blocks.BlockSet) > 0 {
+			summary.Blocks = message.Blocks.BlockSet
+		}
+		if len(message.Attachments) > 0 {
+			summary.Attachments = message.Attachments
+		}
+		if message.Metadata.EventType != "" {
+			summary.Metadata = message.Metadata
+		}
+		out = append(out, summary)
 	}
 	return out
 }
