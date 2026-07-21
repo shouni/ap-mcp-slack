@@ -53,6 +53,7 @@ type GetSlackChannelHistoryInput struct {
 	Latest             string `json:"latest,omitempty" jsonschema:"このUnix timestampより前のメッセージのみ取得します。例: 1700000000.000100"`
 	Inclusive          bool   `json:"inclusive,omitempty" jsonschema:"oldest/latest と同じtimestampのメッセージも含めます。"`
 	IncludeAllMetadata bool   `json:"include_all_metadata,omitempty" jsonschema:"trueの場合、Slackのメッセージメタデータも取得対象にします。"`
+	IncludeRawBlocks   bool   `json:"include_raw_blocks,omitempty" jsonschema:"trueの場合、Block Kit blocksとattachmentsの生データも取得対象にします。省略時はテキストとして要約されたものだけを返します。"`
 }
 
 // GetSlackThreadRepliesInput is the input for get_slack_thread_replies.
@@ -65,6 +66,7 @@ type GetSlackThreadRepliesInput struct {
 	Latest             string `json:"latest,omitempty" jsonschema:"このUnix timestampより前の返信のみ取得します。例: 1700000000.000100"`
 	Inclusive          bool   `json:"inclusive,omitempty" jsonschema:"oldest/latest と同じtimestampの返信も含めます。"`
 	IncludeAllMetadata bool   `json:"include_all_metadata,omitempty" jsonschema:"trueの場合、Slackのメッセージメタデータも取得対象にします。"`
+	IncludeRawBlocks   bool   `json:"include_raw_blocks,omitempty" jsonschema:"trueの場合、Block Kit blocksとattachmentsの生データも取得対象にします。省略時はテキストとして要約されたものだけを返します。"`
 }
 
 // GetSlackMessagesOutput is the structured output for history/replies tools.
@@ -124,6 +126,7 @@ func (t *SlackTools) getSlackChannelHistory(ctx context.Context, _ *mcp.CallTool
 		Latest:             in.Latest,
 		Inclusive:          in.Inclusive,
 		IncludeAllMetadata: in.IncludeAllMetadata,
+		IncludeRawBlocks:   in.IncludeRawBlocks,
 	})
 	if err != nil {
 		return nil, GetSlackMessagesOutput{}, err
@@ -142,6 +145,7 @@ func (t *SlackTools) getSlackThreadReplies(ctx context.Context, _ *mcp.CallToolR
 		Latest:             in.Latest,
 		Inclusive:          in.Inclusive,
 		IncludeAllMetadata: in.IncludeAllMetadata,
+		IncludeRawBlocks:   in.IncludeRawBlocks,
 	})
 	if err != nil {
 		return nil, GetSlackMessagesOutput{}, err
