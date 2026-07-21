@@ -239,6 +239,101 @@ func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessa
 	}, nil
 }
 
+// UpdateWebAPIMessage is the message content sent to Slack Web API chat.update.
+type UpdateWebAPIMessage struct {
+	ChannelID   string           `json:"channel,omitempty"`
+	TS          string           `json:"ts"`
+	Text        string           `json:"text,omitempty"`
+	Blocks      []map[string]any `json:"blocks,omitempty"`
+	Attachments []map[string]any `json:"attachments,omitempty"`
+}
+
+// UpdateWebAPIMessageResponse contains the relevant chat.update response fields.
+type UpdateWebAPIMessageResponse struct {
+	OK        bool   `json:"ok"`
+	ChannelID string `json:"channel,omitempty"`
+	TS        string `json:"ts,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
+// UpdateWebAPIMessage replaces a message's content with Slack Web API chat.update.
+// Only the original poster (the same bot, for a bot token, or the same user, for a
+// user token) can update a message; Slack rejects the request otherwise. As with
+// PostWebAPIMessage, blocks/attachments fully replace the previous content rather
+// than merging with it.
+func (w *webAPITransport) UpdateWebAPIMessage(ctx context.Context, msg UpdateWebAPIMessage) (*UpdateWebAPIMessageResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
+	if msg.ChannelID == "" {
+		return nil, fmt.Errorf("slack: channel_id is required")
+	}
+	ts := strings.TrimSpace(msg.TS)
+	if ts == "" {
+		return nil, fmt.Errorf("slack: ts is required")
+	}
+	if strings.TrimSpace(msg.Text) == "" && len(msg.Blocks) == 0 {
+		return nil, fmt.Errorf("slack: text or blocks is required")
+	}
+
+	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments, w.sourceLabel)
+	if err != nil {
+		return nil, err
+	}
+
+	channelID, respTS, text, err := w.slackAPIClient.UpdateMessageContext(ctx, msg.ChannelID, ts, options...)
+	if err != nil {
+		return nil, fmt.Errorf("slack: chat.update failed: %w", err)
+	}
+	return &UpdateWebAPIMessageResponse{
+		OK:        true,
+		ChannelID: channelID,
+		TS:        respTS,
+		Text:      text,
+	}, nil
+}
+
+// GetChannelInfoOptions configures Slack conversations.info requests.
+type GetChannelInfoOptions struct {
+	ChannelID         string `json:"channel_id,omitempty"`
+	IncludeNumMembers bool   `json:"include_num_members,omitempty"`
+	IncludeLocale     bool   `json:"include_locale,omitempty"`
+}
+
+// GetChannelInfoResponse contains the relevant conversations.info response fields.
+type GetChannelInfoResponse struct {
+	OK      bool                `json:"ok"`
+	Channel SlackChannelSummary `json:"channel"`
+}
+
+// GetChannelInfo fetches a single channel's details through conversations.info. This
+// complements ListChannels/ListJoinedChannels for callers that already have a
+// channel ID and want its details without paging through the whole workspace.
+func (w *webAPITransport) GetChannelInfo(ctx context.Context, opts GetChannelInfoOptions) (*GetChannelInfoResponse, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+	channelID := w.channelIDOrDefault(opts.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("slack: channel_id is required")
+	}
+
+	channel, err := w.slackAPIClient.GetConversationInfoContext(ctx, &slackapi.GetConversationInfoInput{
+		ChannelID:         channelID,
+		IncludeLocale:     opts.IncludeLocale,
+		IncludeNumMembers: opts.IncludeNumMembers,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("slack: conversations.info failed: %w", err)
+	}
+
+	return &GetChannelInfoResponse{
+		OK:      true,
+		Channel: summarizeChannel(*channel),
+	}, nil
+}
+
 // channelPageFetcher fetches one page of channels at cursor, requesting at most
 // requestLimit items, returning the page and Slack's cursor for the next one.
 type channelPageFetcher func(ctx context.Context, cursor string, requestLimit int) (channels []slackapi.Channel, nextCursor string, err error)
@@ -644,8 +739,9 @@ func channelNames(channels []SlackChannelSummary) []string {
 }
 
 func buildPostMessageOptions(msg WebAPIMessage, sourceLabel string) ([]slackapi.MsgOption, error) {
-	options := []slackapi.MsgOption{
-		slackapi.MsgOptionText(msg.Text, false),
+	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments, sourceLabel)
+	if err != nil {
+		return nil, err
 	}
 
 	if strings.TrimSpace(msg.ThreadTS) != "" {
@@ -665,16 +761,24 @@ func buildPostMessageOptions(msg WebAPIMessage, sourceLabel string) ([]slackapi.
 		options = append(options, slackapi.MsgOptionDisableMediaUnfurl())
 	}
 
-	blocks, err := convertBlocks(msg.Blocks)
+	return options, nil
+}
+
+// buildContentOptions builds the text/blocks/attachments options shared by
+// chat.postMessage and chat.update, appending the source-label footer block.
+func buildContentOptions(text string, rawBlocks, rawAttachments []map[string]any, sourceLabel string) ([]slackapi.MsgOption, error) {
+	options := []slackapi.MsgOption{slackapi.MsgOptionText(text, false)}
+
+	blocks, err := convertBlocks(rawBlocks)
 	if err != nil {
 		return nil, err
 	}
-	blocks = appendSourceLabelBlock(blocks, msg.Text, sourceLabel)
+	blocks = appendSourceLabelBlock(blocks, text, sourceLabel)
 	if len(blocks) > 0 {
 		options = append(options, slackapi.MsgOptionBlocks(blocks...))
 	}
 
-	attachments, err := convertAttachments(msg.Attachments)
+	attachments, err := convertAttachments(rawAttachments)
 	if err != nil {
 		return nil, err
 	}

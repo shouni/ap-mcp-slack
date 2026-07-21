@@ -85,38 +85,14 @@ func (w *webAPITransport) ListUsers(ctx context.Context, opts ListUsersOptions) 
 		slackapi.GetUsersOptionTeamID(strings.TrimSpace(opts.TeamID)),
 	)
 
-	users := make([]SlackUserSummary, 0, limit)
-	seenCursors := map[string]struct{}{}
-	nextCursor := ""
-
-	for len(users) < limit {
-		pagination, err = pagination.Next(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("slack: users.list failed: %w", err)
+	users, nextCursor, err := collectUsers(ctx, pagination, limit, func(summary SlackUserSummary) bool {
+		if !opts.IncludeDeleted && summary.Deleted {
+			return false
 		}
-
-		for _, apiUser := range pagination.Users {
-			if len(users) >= limit {
-				break
-			}
-			summary := summarizeUser(apiUser)
-			if !opts.IncludeDeleted && summary.Deleted {
-				continue
-			}
-			if query != "" && !userMatchesQuery(summary, query) {
-				continue
-			}
-			users = append(users, summary)
-		}
-
-		nextCursor = strings.TrimSpace(pagination.Cursor)
-		if nextCursor == "" {
-			break
-		}
-		if _, ok := seenCursors[nextCursor]; ok {
-			return nil, fmt.Errorf("slack: users.list returned duplicate cursor %q", nextCursor)
-		}
-		seenCursors[nextCursor] = struct{}{}
+		return query == "" || userMatchesQuery(summary, query)
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return &ListUsersResponse{
@@ -214,34 +190,50 @@ func (w *webAPITransport) collectActiveUsers(ctx context.Context, teamID string)
 		slackapi.GetUsersOptionTeamID(strings.TrimSpace(teamID)),
 	)
 
-	users := make([]SlackUserSummary, 0, userListPageSize)
-	seenCursors := map[string]struct{}{}
+	users, _, err := collectUsers(ctx, pagination, resolveUserSearchCap, func(summary SlackUserSummary) bool {
+		return !summary.Deleted
+	})
+	return users, err
+}
 
-	for len(users) < resolveUserSearchCap {
+// collectUsers pages through pagination via Next, keeping only users for which keep
+// returns true, until limit users have been collected or Slack has no more pages. It
+// returns the collected users and the cursor for the next page (empty if exhausted),
+// and is shared by ListUsers and collectActiveUsers, which differ only in their limit
+// and keep filter.
+func collectUsers(ctx context.Context, pagination slackapi.UserPagination, limit int, keep func(SlackUserSummary) bool) ([]SlackUserSummary, string, error) {
+	users := make([]SlackUserSummary, 0, min(limit, userListPageSize))
+	seenCursors := map[string]struct{}{}
+	nextCursor := ""
+
+	for len(users) < limit {
 		var err error
 		pagination, err = pagination.Next(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("slack: users.list failed: %w", err)
+			return nil, "", fmt.Errorf("slack: users.list failed: %w", err)
 		}
 
 		for _, apiUser := range pagination.Users {
-			if apiUser.Deleted {
-				continue
+			if len(users) >= limit {
+				break
 			}
-			users = append(users, summarizeUser(apiUser))
+			summary := summarizeUser(apiUser)
+			if keep(summary) {
+				users = append(users, summary)
+			}
 		}
 
-		nextCursor := strings.TrimSpace(pagination.Cursor)
+		nextCursor = strings.TrimSpace(pagination.Cursor)
 		if nextCursor == "" {
 			break
 		}
 		if _, ok := seenCursors[nextCursor]; ok {
-			return nil, fmt.Errorf("slack: users.list returned duplicate cursor %q", nextCursor)
+			return nil, "", fmt.Errorf("slack: users.list returned duplicate cursor %q", nextCursor)
 		}
 		seenCursors[nextCursor] = struct{}{}
 	}
 
-	return users, nil
+	return users, nextCursor, nil
 }
 
 func summarizeUser(user slackapi.User) SlackUserSummary {
