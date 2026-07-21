@@ -2,166 +2,10 @@ package client
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/shouni/go-http-kit/httpkit"
 )
-
-// newTestWebhookClient builds a SlackClient whose webhook transport skips
-// go-http-kit's SSRF/DNS-rebinding validation, for tests that point webhookURL at a
-// loopback httptest server. This lives here rather than as a SlackClientConfig field
-// so production callers have no way to disable that validation.
-//
-// webAPITransport is initialized through the normal (empty-config) constructor
-// rather than left as a zero value: every webAPITransport method checks
-// requireToken() before touching slackAPIClient, so today a nil client field
-// wouldn't actually panic, but a real, well-formed value keeps that true even if a
-// future caller extends this helper to exercise Web API methods too.
-func newTestWebhookClient(webhookURL string) *SlackClient {
-	return newTestWebhookClientWithSourceLabel(webhookURL, "")
-}
-
-func newTestWebhookClientWithSourceLabel(webhookURL, sourceLabel string) *SlackClient {
-	return &SlackClient{
-		webhookTransport: webhookTransport{
-			webhookURL:    webhookURL,
-			sourceLabel:   sourceLabel,
-			httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry(), httpkit.WithSkipNetworkValidation(true)),
-		},
-		webAPITransport: newWebAPITransport(SlackClientConfig{}),
-	}
-}
-
-func TestPostMessage(t *testing.T) {
-	t.Parallel()
-
-	var got Message
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s, want POST", r.Method)
-		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-			t.Fatalf("Content-Type = %q, want application/json", ct)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer server.Close()
-
-	client := newTestWebhookClient(server.URL)
-	unfurlLinks := false
-	resp, err := client.PostMessage(context.Background(), Message{
-		Text: "*hello* <@shouni>",
-		Blocks: []map[string]any{
-			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "*hello*"}},
-		},
-		ThreadTS:    "123.456",
-		UnfurlLinks: &unfurlLinks,
-	})
-	if err != nil {
-		t.Fatalf("PostMessage() error = %v", err)
-	}
-	if resp.StatusCode != http.StatusOK || resp.Body != "ok" {
-		t.Fatalf("response = %+v, want status 200 body ok", resp)
-	}
-	if got.Text != "*hello* <@shouni>" || got.ThreadTS != "123.456" {
-		t.Fatalf("payload = %+v", got)
-	}
-	if got.UnfurlLinks == nil || *got.UnfurlLinks {
-		t.Fatalf("UnfurlLinks = %v, want false pointer", got.UnfurlLinks)
-	}
-	if len(got.Blocks) != 1 {
-		t.Fatalf("Blocks length = %d, want 1", len(got.Blocks))
-	}
-}
-
-func TestPostMessageAppendsSourceLabelBlock(t *testing.T) {
-	t.Parallel()
-
-	var got Message
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-		_, _ = w.Write([]byte("ok"))
-	}))
-	defer server.Close()
-
-	client := newTestWebhookClientWithSourceLabel(server.URL, "ap-mcp-slack (MCP) 経由")
-	resp, err := client.PostMessage(context.Background(), Message{Text: "*hello* <@shouni>"})
-	if err != nil {
-		t.Fatalf("PostMessage() error = %v", err)
-	}
-	if resp.StatusCode != http.StatusOK || resp.Body != "ok" {
-		t.Fatalf("response = %+v, want status 200 body ok", resp)
-	}
-	if len(got.Blocks) != 2 {
-		t.Fatalf("Blocks length = %d, want 2", len(got.Blocks))
-	}
-	if got.Blocks[0]["type"] != "section" {
-		t.Fatalf("first block = %+v, want section", got.Blocks[0])
-	}
-	if got.Blocks[1]["type"] != "context" {
-		t.Fatalf("last block = %+v, want context", got.Blocks[1])
-	}
-	elements, ok := got.Blocks[1]["elements"].([]any)
-	if !ok || len(elements) != 1 {
-		t.Fatalf("context elements = %#v, want one element", got.Blocks[1]["elements"])
-	}
-	element, ok := elements[0].(map[string]any)
-	if !ok || element["text"] != "ap-mcp-slack (MCP) 経由" {
-		t.Fatalf("context element = %#v, want source label", elements[0])
-	}
-}
-
-func TestPreviewMessageBuildsPayloadWithoutWebhookURL(t *testing.T) {
-	t.Parallel()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		SourceLabel: "ap-mcp-slack (MCP) 経由",
-	})
-	payload, err := client.PreviewMessage(Message{Text: "*hello* <@shouni>"})
-	if err != nil {
-		t.Fatalf("PreviewMessage() error = %v", err)
-	}
-	if payload.Text != "*hello* <@shouni>" {
-		t.Fatalf("Text = %q, want input text", payload.Text)
-	}
-	if len(payload.Blocks) != 2 {
-		t.Fatalf("Blocks length = %d, want 2", len(payload.Blocks))
-	}
-	if payload.Blocks[0]["type"] != "section" || payload.Blocks[1]["type"] != "context" {
-		t.Fatalf("Blocks = %+v, want section and context", payload.Blocks)
-	}
-}
-
-func TestPostMessageRequiresText(t *testing.T) {
-	t.Parallel()
-
-	client := NewSlackClient("http://example.test")
-	if _, err := client.PostMessage(context.Background(), Message{Text: "  "}); err == nil {
-		t.Fatal("PostMessage() error = nil, want error")
-	}
-}
-
-func TestPostMessageReturnsSlackError(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "invalid_payload", http.StatusBadRequest)
-	}))
-	defer server.Close()
-
-	client := newTestWebhookClient(server.URL)
-	if _, err := client.PostMessage(context.Background(), Message{Text: "hello"}); err == nil {
-		t.Fatal("PostMessage() error = nil, want error")
-	}
-}
 
 func TestPostWebAPIMessage(t *testing.T) {
 	t.Parallel()
@@ -276,6 +120,109 @@ func TestPreviewWebAPIMessageValidatesChannel(t *testing.T) {
 	client := NewSlackClientWithConfig(SlackClientConfig{})
 	if _, err := client.PreviewWebAPIMessage(WebAPIMessage{Text: "hello"}); err == nil {
 		t.Fatal("PreviewWebAPIMessage() error = nil, want channel error")
+	}
+}
+
+func TestUpdateWebAPIMessage(t *testing.T) {
+	t.Parallel()
+
+	got := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.update" {
+			t.Fatalf("path = %s, want /chat.update", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		got["token"] = r.Form.Get("token")
+		got["channel"] = r.Form.Get("channel")
+		got["ts"] = r.Form.Get("ts")
+		got["text"] = r.Form.Get("text")
+		got["blocks"] = r.Form.Get("blocks")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100","text":"*updated*"}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:            "xoxp-test",
+		DefaultChannelID: "C123",
+		APIBaseURL:       server.URL,
+		SourceLabel:      "ap-mcp-slack (MCP) 経由",
+	})
+	resp, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{
+		TS:   "1700000000.000100",
+		Text: "*updated*",
+	})
+	if err != nil {
+		t.Fatalf("UpdateWebAPIMessage() error = %v", err)
+	}
+	if !resp.OK || resp.ChannelID != "C123" || resp.TS != "1700000000.000100" || resp.Text != "*updated*" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if got["token"] != "xoxp-test" || got["channel"] != "C123" || got["ts"] != "1700000000.000100" || got["text"] != "*updated*" {
+		t.Fatalf("payload = %+v", got)
+	}
+	if got["blocks"] == "" {
+		t.Fatalf("blocks missing from payload (source label footer should be appended): %+v", got)
+	}
+}
+
+func TestUpdateWebAPIMessageValidatesInputs(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{})
+	if _, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{ChannelID: "C123", TS: "123.456", Text: "hi"}); err == nil {
+		t.Fatal("UpdateWebAPIMessage() error = nil, want token error")
+	}
+
+	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
+	if _, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{TS: "123.456", Text: "hi"}); err == nil {
+		t.Fatal("UpdateWebAPIMessage() error = nil, want channel error")
+	}
+	if _, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{ChannelID: "C123", Text: "hi"}); err == nil {
+		t.Fatal("UpdateWebAPIMessage() error = nil, want ts error")
+	}
+	if _, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{ChannelID: "C123", TS: "123.456"}); err == nil {
+		t.Fatal("UpdateWebAPIMessage() error = nil, want text/blocks error")
+	}
+}
+
+func TestDeleteWebAPIMessage(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat.delete" {
+			t.Fatalf("path = %s, want /chat.delete", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		got = map[string]string{
+			"token":   r.Form.Get("token"),
+			"channel": r.Form.Get("channel"),
+			"ts":      r.Form.Get("ts"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:            "xoxp-test",
+		DefaultChannelID: "C123",
+		APIBaseURL:       server.URL,
+	})
+	resp, err := client.DeleteWebAPIMessage(context.Background(), "", "1700000000.000100")
+	if err != nil {
+		t.Fatalf("DeleteWebAPIMessage() error = %v", err)
+	}
+	if !resp.OK || resp.ChannelID != "C123" || resp.TS != "1700000000.000100" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if got["token"] != "xoxp-test" || got["channel"] != "C123" || got["ts"] != "1700000000.000100" {
+		t.Fatalf("payload = %+v", got)
 	}
 }
 
@@ -544,6 +491,60 @@ func TestListJoinedChannelsValidatesInputs(t *testing.T) {
 	}
 }
 
+func TestGetChannelInfo(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.info" {
+			t.Fatalf("path = %s, want /conversations.info", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		got = map[string]string{
+			"token":               r.Form.Get("token"),
+			"channel":             r.Form.Get("channel"),
+			"include_num_members": r.Form.Get("include_num_members"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C123","name":"general","is_channel":true,"num_members":5}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.GetChannelInfo(context.Background(), GetChannelInfoOptions{
+		ChannelID:         "C123",
+		IncludeNumMembers: true,
+	})
+	if err != nil {
+		t.Fatalf("GetChannelInfo() error = %v", err)
+	}
+	if !resp.OK || resp.Channel.ID != "C123" || resp.Channel.Name != "general" || resp.Channel.NumMembers != 5 {
+		t.Fatalf("response = %+v", resp)
+	}
+	if got["token"] != "xoxp-test" || got["channel"] != "C123" || got["include_num_members"] != "true" {
+		t.Fatalf("payload = %+v", got)
+	}
+}
+
+func TestGetChannelInfoRequiresTokenAndChannel(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{})
+	if _, err := client.GetChannelInfo(context.Background(), GetChannelInfoOptions{ChannelID: "C123"}); err == nil {
+		t.Fatal("GetChannelInfo() error = nil, want token error")
+	}
+
+	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
+	if _, err := client.GetChannelInfo(context.Background(), GetChannelInfoOptions{}); err == nil {
+		t.Fatal("GetChannelInfo() error = nil, want channel error")
+	}
+}
+
 func TestGetConversationHistory(t *testing.T) {
 	t.Parallel()
 
@@ -656,377 +657,6 @@ func TestGetConversationRepliesValidatesInputs(t *testing.T) {
 	}
 	if _, err := client.GetConversationReplies(context.Background(), ConversationRepliesOptions{ChannelID: "C123", TS: "1700000000.000100", Limit: maxMessageListLimit + 1}); err == nil {
 		t.Fatal("GetConversationReplies() error = nil, want limit error")
-	}
-}
-
-func TestDeleteWebAPIMessage(t *testing.T) {
-	t.Parallel()
-
-	var got map[string]string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat.delete" {
-			t.Fatalf("path = %s, want /chat.delete", r.URL.Path)
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse form: %v", err)
-		}
-		got = map[string]string{
-			"token":   r.Form.Get("token"),
-			"channel": r.Form.Get("channel"),
-			"ts":      r.Form.Get("ts"),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:            "xoxp-test",
-		DefaultChannelID: "C123",
-		APIBaseURL:       server.URL,
-	})
-	resp, err := client.DeleteWebAPIMessage(context.Background(), "", "1700000000.000100")
-	if err != nil {
-		t.Fatalf("DeleteWebAPIMessage() error = %v", err)
-	}
-	if !resp.OK || resp.ChannelID != "C123" || resp.TS != "1700000000.000100" {
-		t.Fatalf("response = %+v", resp)
-	}
-	if got["token"] != "xoxp-test" || got["channel"] != "C123" || got["ts"] != "1700000000.000100" {
-		t.Fatalf("payload = %+v", got)
-	}
-}
-
-func TestListUsers(t *testing.T) {
-	t.Parallel()
-
-	type request struct {
-		Cursor string
-		Limit  string
-		Token  string
-	}
-	var requests []request
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/users.list" {
-			t.Fatalf("path = %s, want /users.list", r.URL.Path)
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse form: %v", err)
-		}
-		requests = append(requests, request{
-			Cursor: r.Form.Get("cursor"),
-			Limit:  r.Form.Get("limit"),
-			Token:  r.Form.Get("token"),
-		})
-
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Form.Get("cursor") {
-		case "":
-			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U002","name":"zeta","real_name":"Zeta Z"},{"id":"U001","name":"alpha","real_name":"Alpha A"}],"response_metadata":{"next_cursor":"cursor-2"}}`))
-		case "cursor-2":
-			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U003","name":"beta","real_name":"Beta B"}],"response_metadata":{"next_cursor":""}}`))
-		default:
-			t.Fatalf("unexpected cursor %q", r.Form.Get("cursor"))
-		}
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ListUsers(context.Background(), ListUsersOptions{Limit: 3})
-	if err != nil {
-		t.Fatalf("ListUsers() error = %v", err)
-	}
-	if !resp.OK || resp.Count != 3 || resp.NextCursor != "" {
-		t.Fatalf("response = %+v", resp)
-	}
-	wantIDs := []string{"U002", "U001", "U003"}
-	for i, want := range wantIDs {
-		if resp.Users[i].ID != want {
-			t.Fatalf("users = %+v, want id %q at %d", resp.Users, want, i)
-		}
-	}
-	if len(requests) != 2 {
-		t.Fatalf("requests = %+v, want 2 requests", requests)
-	}
-	if requests[0].Token != "xoxp-test" {
-		t.Fatalf("first request = %+v", requests[0])
-	}
-	if requests[1].Cursor != "cursor-2" {
-		t.Fatalf("second request = %+v", requests[1])
-	}
-}
-
-func TestListUsersExcludesDeletedByDefault(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/users.list" {
-			t.Fatalf("path = %s, want /users.list", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U001","name":"alpha","deleted":false},{"id":"U999","name":"ghost","deleted":true},{"id":"U002","name":"beta","deleted":false}],"response_metadata":{"next_cursor":""}}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-
-	resp, err := client.ListUsers(context.Background(), ListUsersOptions{})
-	if err != nil {
-		t.Fatalf("ListUsers() error = %v", err)
-	}
-	if resp.Count != 2 {
-		t.Fatalf("count = %d, want 2 (deleted excluded): %+v", resp.Count, resp.Users)
-	}
-
-	resp, err = client.ListUsers(context.Background(), ListUsersOptions{IncludeDeleted: true})
-	if err != nil {
-		t.Fatalf("ListUsers() error = %v", err)
-	}
-	if resp.Count != 3 {
-		t.Fatalf("count = %d, want 3 (deleted included): %+v", resp.Count, resp.Users)
-	}
-}
-
-func TestListUsersQueryFilter(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U001","name":"alice","real_name":"Alice A","profile":{"display_name":"Ali","email":"alice@example.com"}},{"id":"U002","name":"bob","real_name":"Bob B","profile":{"display_name":"Bobby","email":"bob@example.com"}}],"response_metadata":{"next_cursor":""}}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ListUsers(context.Background(), ListUsersOptions{Query: "ALI"})
-	if err != nil {
-		t.Fatalf("ListUsers() error = %v", err)
-	}
-	if resp.Count != 1 || resp.Users[0].ID != "U001" {
-		t.Fatalf("users = %+v, want only U001 (alice)", resp.Users)
-	}
-}
-
-func TestListUsersValidatesInputs(t *testing.T) {
-	t.Parallel()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{})
-	if _, err := client.ListUsers(context.Background(), ListUsersOptions{}); err == nil {
-		t.Fatal("ListUsers() error = nil, want token error")
-	}
-
-	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
-	if _, err := client.ListUsers(context.Background(), ListUsersOptions{Limit: -1}); err == nil {
-		t.Fatal("ListUsers() error = nil, want limit error")
-	}
-	if _, err := client.ListUsers(context.Background(), ListUsersOptions{Limit: maxUserListLimit + 1}); err == nil {
-		t.Fatal("ListUsers() error = nil, want limit error")
-	}
-}
-
-func TestLookupUserByEmail(t *testing.T) {
-	t.Parallel()
-
-	var gotEmail string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/users.lookupByEmail" {
-			t.Fatalf("path = %s, want /users.lookupByEmail", r.URL.Path)
-		}
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse form: %v", err)
-		}
-		gotEmail = r.Form.Get("email")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"U001","name":"alice","real_name":"Alice A","profile":{"display_name":"Ali","email":"alice@example.com"}}}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	user, err := client.LookupUserByEmail(context.Background(), " alice@example.com ")
-	if err != nil {
-		t.Fatalf("LookupUserByEmail() error = %v", err)
-	}
-	if user.ID != "U001" || user.Email != "alice@example.com" || user.DisplayName != "Ali" {
-		t.Fatalf("user = %+v", user)
-	}
-	if gotEmail != "alice@example.com" {
-		t.Fatalf("email sent = %q, want trimmed email", gotEmail)
-	}
-}
-
-func TestLookupUserByEmailNotFound(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":false,"error":"users_not_found"}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	if _, err := client.LookupUserByEmail(context.Background(), "nobody@example.com"); err == nil {
-		t.Fatal("LookupUserByEmail() error = nil, want users_not_found error")
-	}
-}
-
-func TestLookupUserByEmailRequiresTokenAndEmail(t *testing.T) {
-	t.Parallel()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{})
-	if _, err := client.LookupUserByEmail(context.Background(), "alice@example.com"); err == nil {
-		t.Fatal("LookupUserByEmail() error = nil, want token error")
-	}
-
-	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
-	if _, err := client.LookupUserByEmail(context.Background(), "  "); err == nil {
-		t.Fatal("LookupUserByEmail() error = nil, want email error")
-	}
-}
-
-func TestResolveUserByEmail(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/users.lookupByEmail" {
-			t.Fatalf("path = %s, want /users.lookupByEmail", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"U001","name":"alice","real_name":"Alice A","profile":{"display_name":"Ali","email":"alice@example.com"}}}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ResolveUser(context.Background(), "", "alice@example.com", "")
-	if err != nil {
-		t.Fatalf("ResolveUser() error = %v", err)
-	}
-	if resp.Status != ResolveUserStatusFound || resp.User == nil || resp.User.ID != "U001" || resp.Mention != "<@U001>" {
-		t.Fatalf("response = %+v", resp)
-	}
-}
-
-func TestResolveUserByEmailNotFound(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":false,"error":"users_not_found"}`))
-	}))
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ResolveUser(context.Background(), "", "nobody@example.com", "")
-	if err != nil {
-		t.Fatalf("ResolveUser() error = %v", err)
-	}
-	if resp.Status != ResolveUserStatusNotFound || resp.User != nil {
-		t.Fatalf("response = %+v", resp)
-	}
-}
-
-func newResolveByNameTestServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/users.list" {
-			t.Fatalf("path = %s, want /users.list", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"members":[
-			{"id":"U001","name":"alice","real_name":"Alice Smith","profile":{"display_name":"Alice"}},
-			{"id":"U002","name":"alice.wong","real_name":"Alice Wong","profile":{"display_name":"AWong"}},
-			{"id":"U003","name":"bob","real_name":"Bob Lee","profile":{"display_name":"Bobby"}}
-		],"response_metadata":{"next_cursor":""}}`))
-	}))
-}
-
-func TestResolveUserByNameExactMatch(t *testing.T) {
-	t.Parallel()
-
-	server := newResolveByNameTestServer(t)
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ResolveUser(context.Background(), "alice", "", "")
-	if err != nil {
-		t.Fatalf("ResolveUser() error = %v", err)
-	}
-	if resp.Status != ResolveUserStatusFound || resp.User == nil || resp.User.ID != "U001" || resp.Mention != "<@U001>" {
-		t.Fatalf("response = %+v", resp)
-	}
-}
-
-func TestResolveUserByNamePartialMatchIsAmbiguous(t *testing.T) {
-	t.Parallel()
-
-	server := newResolveByNameTestServer(t)
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ResolveUser(context.Background(), "ali", "", "")
-	if err != nil {
-		t.Fatalf("ResolveUser() error = %v", err)
-	}
-	if resp.Status != ResolveUserStatusAmbiguous || len(resp.Candidates) != 2 {
-		t.Fatalf("response = %+v", resp)
-	}
-}
-
-func TestResolveUserByNameNotFound(t *testing.T) {
-	t.Parallel()
-
-	server := newResolveByNameTestServer(t)
-	defer server.Close()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{
-		Token:      "xoxp-test",
-		APIBaseURL: server.URL,
-	})
-	resp, err := client.ResolveUser(context.Background(), "zzz-nobody", "", "")
-	if err != nil {
-		t.Fatalf("ResolveUser() error = %v", err)
-	}
-	if resp.Status != ResolveUserStatusNotFound || resp.User != nil || resp.Candidates != nil {
-		t.Fatalf("response = %+v", resp)
-	}
-}
-
-func TestResolveUserRequiresTokenAndNameOrEmail(t *testing.T) {
-	t.Parallel()
-
-	client := NewSlackClientWithConfig(SlackClientConfig{})
-	if _, err := client.ResolveUser(context.Background(), "alice", "", ""); err == nil {
-		t.Fatal("ResolveUser() error = nil, want token error")
-	}
-
-	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
-	if _, err := client.ResolveUser(context.Background(), " ", " ", ""); err == nil {
-		t.Fatal("ResolveUser() error = nil, want name/email error")
 	}
 }
 
