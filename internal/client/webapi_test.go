@@ -194,7 +194,7 @@ func TestUpdateWebAPIMessageAllowsAttachmentsOnly(t *testing.T) {
 	// Slack's chat.update accepts an update carrying only attachments (no text or
 	// blocks), same as chat.postMessage; the content-required check must not treat
 	// attachments as insufficient on its own.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
 	}))
