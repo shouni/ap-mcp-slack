@@ -125,6 +125,7 @@ Slack API の `conversations.list` には並び順を指定する引数がない
 | `latest` | 任意 | このUnix timestampより前のメッセージのみ取得します。 |
 | `inclusive` | 任意 | `oldest` / `latest` と同じtimestampのメッセージも含めます。 |
 | `include_all_metadata` | 任意 | `true` の場合、Slackのメッセージメタデータも取得対象にします。 |
+| `include_raw_blocks` | 任意 | `true` の場合、Block Kit blocksとattachmentsの生データも取得対象にします。省略時はテキストとして要約されたものだけを返し、トークン消費を抑えます。 |
 
 `get_slack_thread_replies` の主な入力:
 
@@ -138,6 +139,7 @@ Slack API の `conversations.list` には並び順を指定する引数がない
 | `latest` | 任意 | このUnix timestampより前の返信のみ取得します。 |
 | `inclusive` | 任意 | `oldest` / `latest` と同じtimestampの返信も含めます。 |
 | `include_all_metadata` | 任意 | `true` の場合、Slackのメッセージメタデータも取得対象にします。 |
+| `include_raw_blocks` | 任意 | `true` の場合、Block Kit blocksとattachmentsの生データも取得対象にします。省略時はテキストとして要約されたものだけを返し、トークン消費を抑えます。 |
 
 `get_slack_channel_history` / `get_slack_thread_replies` は、public channel には `channels:history`、private channel には `groups:history` スコープが必要です。Botトークンで読む場合、対象チャンネルにbotが参加している必要があります。
 
