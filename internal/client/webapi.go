@@ -273,8 +273,8 @@ func (w *webAPITransport) UpdateWebAPIMessage(ctx context.Context, msg UpdateWeb
 	if ts == "" {
 		return nil, fmt.Errorf("slack: ts is required")
 	}
-	if strings.TrimSpace(msg.Text) == "" && len(msg.Blocks) == 0 {
-		return nil, fmt.Errorf("slack: text or blocks is required")
+	if strings.TrimSpace(msg.Text) == "" && len(msg.Blocks) == 0 && len(msg.Attachments) == 0 {
+		return nil, fmt.Errorf("slack: text, blocks, or attachments is required")
 	}
 
 	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments, w.sourceLabel)

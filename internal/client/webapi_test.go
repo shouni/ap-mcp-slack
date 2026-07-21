@@ -184,7 +184,35 @@ func TestUpdateWebAPIMessageValidatesInputs(t *testing.T) {
 		t.Fatal("UpdateWebAPIMessage() error = nil, want ts error")
 	}
 	if _, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{ChannelID: "C123", TS: "123.456"}); err == nil {
-		t.Fatal("UpdateWebAPIMessage() error = nil, want text/blocks error")
+		t.Fatal("UpdateWebAPIMessage() error = nil, want text/blocks/attachments error")
+	}
+}
+
+func TestUpdateWebAPIMessageAllowsAttachmentsOnly(t *testing.T) {
+	t.Parallel()
+
+	// Slack's chat.update accepts an update carrying only attachments (no text or
+	// blocks), same as chat.postMessage; the content-required check must not treat
+	// attachments as insufficient on its own.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	_, err := client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{
+		ChannelID: "C123",
+		TS:        "1700000000.000100",
+		Attachments: []map[string]any{
+			{"fallback": "fallback text", "text": "attachment text"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateWebAPIMessage() error = %v, want attachments-only update to succeed", err)
 	}
 }
 
