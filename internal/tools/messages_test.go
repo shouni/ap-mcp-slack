@@ -145,6 +145,32 @@ func TestUpdateSlackMessage(t *testing.T) {
 	}
 }
 
+func TestUpdateSlackMessageAllowsAttachmentsOnly(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
+	}))
+	defer server.Close()
+
+	session := newTestSession(t, client.SlackClientConfig{
+		Token:            "xoxp-test",
+		DefaultChannelID: "C123",
+		APIBaseURL:       server.URL,
+	})
+
+	result := callTool(t, session, "update_slack_message", map[string]any{
+		"ts": "1700000000.000100",
+		"attachments": []map[string]any{
+			{"fallback": "fallback text", "text": "attachment text"},
+		},
+	}, nil)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, want attachments-only update to succeed, content = %+v", result.Content)
+	}
+}
+
 func TestUpdateSlackMessageRequiresTS(t *testing.T) {
 	t.Parallel()
 

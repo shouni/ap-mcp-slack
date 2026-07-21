@@ -63,7 +63,7 @@ MCP クライアントからコマンドとして起動され、stdin/stdout の
 | --- | :---: | --- |
 | `ts` | 必須 | 更新対象メッセージのts。`post_slack_message_as_user` の戻り値を利用できます。 |
 | `channel_id` | 任意 | 更新対象のチャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `text` | 任意 | 更新後の本文。`blocks` を指定しない場合は必須です。 |
+| `text` | 任意 | 更新後の本文。`blocks` または `attachments` を指定しない場合は必須です。 |
 | `blocks` | 任意 | 更新後のSlack Block Kit blocks配列。指定すると既存のblocksを置き換えます。 |
 | `attachments` | 任意 | 更新後のSlack attachments配列。指定すると既存のattachmentsを置き換えます。 |
 
