@@ -272,6 +272,40 @@ func mentionString(userID string) string {
 	return fmt.Sprintf("<@%s>", userID)
 }
 
+// ResolvedMention is a Slack user resolved by ID, for showing a human-readable
+// mention target (real/display name) in message previews instead of a bare <@ID> tag.
+type ResolvedMention struct {
+	SlackUserSummary
+	Mention string `json:"mention"`
+}
+
+// ResolveMentions looks up each of userIDs via users.info. It is used by
+// preview_slack_message_as_user to show who a message's explicit mentions field will
+// actually notify, since the raw <@ID> tags embedded in the payload aren't
+// human-readable on their own.
+func (w *webAPITransport) ResolveMentions(ctx context.Context, userIDs []string) ([]ResolvedMention, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+
+	mentions := make([]ResolvedMention, 0, len(userIDs))
+	for _, id := range userIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		apiUser, err := w.slackAPIClient.GetUserInfoContext(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("slack: users.info failed for %q: %w", id, err)
+		}
+		mentions = append(mentions, ResolvedMention{
+			SlackUserSummary: summarizeUser(*apiUser),
+			Mention:          mentionString(id),
+		})
+	}
+	return mentions, nil
+}
+
 // isUserNotFoundError reports whether err is Slack's users_not_found error, as
 // returned by users.lookupByEmail when no user has the given email address.
 func isUserNotFoundError(err error) bool {

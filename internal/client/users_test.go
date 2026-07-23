@@ -339,3 +339,59 @@ func TestResolveUserRequiresTokenAndNameOrEmail(t *testing.T) {
 		t.Fatal("ResolveUser() error = nil, want name/email error")
 	}
 }
+
+func TestResolveMentions(t *testing.T) {
+	t.Parallel()
+
+	var gotUsers []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/users.info" {
+			t.Fatalf("path = %s, want /users.info", r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		user := r.Form.Get("user")
+		gotUsers = append(gotUsers, user)
+		w.Header().Set("Content-Type", "application/json")
+		switch user {
+		case "U001":
+			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"U001","name":"alice","real_name":"Alice A","profile":{"display_name":"Ali"}}}`))
+		case "U002":
+			_, _ = w.Write([]byte(`{"ok":true,"user":{"id":"U002","name":"bob","real_name":"Bob B","profile":{"display_name":"Bobby"}}}`))
+		default:
+			t.Fatalf("unexpected user %q", user)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	mentions, err := client.ResolveMentions(context.Background(), []string{"U001", " ", "U002"})
+	if err != nil {
+		t.Fatalf("ResolveMentions() error = %v", err)
+	}
+	if len(mentions) != 2 {
+		t.Fatalf("mentions = %+v, want 2 (blank entry skipped)", mentions)
+	}
+	if mentions[0].ID != "U001" || mentions[0].DisplayName != "Ali" || mentions[0].Mention != "<@U001>" {
+		t.Fatalf("mentions[0] = %+v", mentions[0])
+	}
+	if mentions[1].ID != "U002" || mentions[1].DisplayName != "Bobby" || mentions[1].Mention != "<@U002>" {
+		t.Fatalf("mentions[1] = %+v", mentions[1])
+	}
+	if len(gotUsers) != 2 {
+		t.Fatalf("requests = %+v, want 2 users.info calls", gotUsers)
+	}
+}
+
+func TestResolveMentionsRequiresToken(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{})
+	if _, err := client.ResolveMentions(context.Background(), []string{"U001"}); err == nil {
+		t.Fatal("ResolveMentions() error = nil, want token error")
+	}
+}
