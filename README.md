@@ -12,23 +12,25 @@ MCP クライアントからコマンドとして起動され、stdin/stdout の
 
 ## 提供ツール
 
+特に断りがない限り、以下のツールは Web API 経由で動作し、`MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN`（未設定時は `MCP_SLACK_BOT_TOKEN`）を使用します。
+
 | ツール名 | 説明 |
 | --- | --- |
 | `preview_slack_message` | `post_slack_message` で送信される Incoming Webhook payload を投稿せずに確認 |
 | `post_slack_message` | `confirm=true` の場合のみ `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿。`confirm` を省略/falseにした場合は投稿せずプレビューのみ返す |
 | `preview_slack_message_as_user` | `post_slack_message_as_user` で送信される `chat.postMessage` payload を投稿せずに確認 |
-| `post_slack_message_as_user` | `confirm=true` の場合のみ `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `chat.postMessage` で投稿し、`channel_id` と `ts` を返す。`confirm` を省略/falseにした場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返す |
-| `update_slack_message` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `chat.update` で投稿済みメッセージの内容を更新 |
-| `delete_slack_message` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `chat.delete` で投稿済みメッセージを削除 |
-| `list_slack_channels` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `conversations.list` でワークスペース全体のチャンネル一覧を取得 |
-| `list_joined_slack_channels` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `users.conversations` でトークン所有者が参加しているチャンネルのみを取得 |
-| `get_slack_channel_info` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `conversations.info` で単一チャンネルの詳細情報を取得 |
-| `get_slack_channel_history` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `conversations.history` でチャンネルのメッセージ履歴を取得 |
-| `get_slack_thread_replies` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `conversations.replies` で指定メッセージのスレッド返信を取得 |
-| `list_slack_users` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `users.list` でワークスペースメンバー一覧を取得 |
-| `lookup_slack_user_by_email` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `users.lookupByEmail` でメールアドレスから単一ユーザーを検索 |
+| `post_slack_message_as_user` | `confirm=true` の場合のみ `chat.postMessage` で投稿し、`channel_id` と `ts` を返す。`confirm` を省略/falseにした場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返す |
+| `update_slack_message` | `chat.update` で投稿済みメッセージの内容を更新 |
+| `delete_slack_message` | `chat.delete` で投稿済みメッセージを削除 |
+| `list_slack_channels` | `conversations.list` でワークスペース全体のチャンネル一覧を取得 |
+| `list_joined_slack_channels` | `users.conversations` でトークン所有者が参加しているチャンネルのみを取得 |
+| `get_slack_channel_info` | `conversations.info` で単一チャンネルの詳細情報を取得 |
+| `get_slack_channel_history` | `conversations.history` でチャンネルのメッセージ履歴を取得 |
+| `get_slack_thread_replies` | `conversations.replies` で指定メッセージのスレッド返信を取得 |
+| `list_slack_users` | `users.list` でワークスペースメンバー一覧を取得 |
+| `lookup_slack_user_by_email` | `users.lookupByEmail` でメールアドレスから単一ユーザーを検索 |
 | `resolve_slack_user` | `name` または `email` から Slack ユーザーを一意に解決し、`<@U...>` 形式のmentionを返す |
-| `get_slack_auth_info` | `MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN` を使って `auth.test` で現在のトークンの認証情報（team/user/bot_idなど）を確認。OAuthスコープ不要 |
+| `get_slack_auth_info` | `auth.test` で現在のトークンの認証情報（team/user/bot_idなど）を確認。OAuthスコープ不要 |
 
 各ツールの入力フィールド詳細・必要なOAuthスコープは [docs/tools.md](docs/tools.md) を参照してください。
 
