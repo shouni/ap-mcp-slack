@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/shouni/go-http-kit v1.6.0
+	github.com/shouni/go-http-kit v1.7.0
 	github.com/slack-go/slack v0.27.0
 )
 
