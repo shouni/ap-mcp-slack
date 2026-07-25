@@ -31,14 +31,3 @@ func TestGetSlackAuthInfo(t *testing.T) {
 		t.Fatalf("out = %+v", out)
 	}
 }
-
-func TestGetSlackAuthInfoRequiresToken(t *testing.T) {
-	t.Parallel()
-
-	session := newTestSession(t, client.SlackClientConfig{})
-
-	result := callTool(t, session, "get_slack_auth_info", map[string]any{}, nil)
-	if !result.IsError {
-		t.Fatal("CallTool() IsError = false, want token error")
-	}
-}

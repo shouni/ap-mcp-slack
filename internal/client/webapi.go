@@ -33,6 +33,12 @@ func newWebAPITransport(cfg SlackClientConfig) webAPITransport {
 	}
 }
 
+// WebAPIConfigured reports whether a Web API token was configured. Tool registration
+// uses it to leave the Web API tools out entirely when they could only ever fail.
+func (w *webAPITransport) WebAPIConfigured() bool {
+	return w.token != ""
+}
+
 // requireToken reports an error if no Web API token was configured. All Web API
 // operations (post-as-user, delete, list) need one, so they share this check.
 func (w *webAPITransport) requireToken() error {

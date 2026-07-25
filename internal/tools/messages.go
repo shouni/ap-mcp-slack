@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,6 +22,23 @@ type MessageContent struct {
 	UnfurlLinks *bool            `json:"unfurl_links,omitempty" jsonschema:"リンク展開を制御します。"`
 	UnfurlMedia *bool            `json:"unfurl_media,omitempty" jsonschema:"メディア展開を制御します。"`
 	Mentions    []string         `json:"mentions,omitempty" jsonschema:"メンション対象のSlackユーザーID配列（例: [\"U0123456\"]）。本文の先頭に <@ID> 形式で追加されます。blocksを指定した場合、本文はフォールバック表示にしか使われないため、blocks内で明示的にメンションしてください。"`
+}
+
+// validate rejects input combinations that would quietly do something other than what
+// the caller asked for.
+//
+// Mentions are prepended to Text, but Slack renders blocks in place of text whenever
+// blocks are present and keeps text only as the notification fallback. A
+// mentions+blocks call would therefore ping the named people while showing no mention
+// anywhere in the visible message. The schema documents this, but schema prose is
+// exactly what a model skips, so the combination is refused here instead. Where in a
+// caller's block layout the mention belongs is theirs to decide, not something to
+// guess at.
+func (m MessageContent) validate() error {
+	if len(m.Blocks) > 0 && mentionPrefix(m.Mentions) != "" {
+		return fmt.Errorf("slack: mentions cannot be combined with blocks: put the <@ID> tag inside blocks instead, since Slack renders blocks in place of text")
+	}
+	return nil
 }
 
 // toMessage builds the Incoming Webhook payload, which carries threadTS as a
@@ -158,21 +176,102 @@ type UpdateSlackMessageInput struct {
 	Text        string           `json:"text,omitempty" jsonschema:"更新後の本文。blocks または attachments を指定しない場合は必須です。"`
 	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"更新後のSlack Block Kit blocks配列。指定すると既存のblocksを置き換えます。"`
 	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"更新後のSlack attachments配列。指定すると既存のattachmentsを置き換えます。"`
+	Confirm     bool             `json:"confirm,omitempty" jsonschema:"true にすると実際に更新します。false（省略時）の場合は更新せず、更新対象メッセージの現在の内容と更新後の内容を返します。プレビューを確認したうえで confirm=true を指定して再実行してください。"`
 }
 
 // UpdateSlackMessageOutput is the structured output for update_slack_message.
-type UpdateSlackMessageOutput = client.UpdateWebAPIMessageResponse
+type UpdateSlackMessageOutput struct {
+	OK bool `json:"ok"`
+	// Updated is false when confirm was omitted/false: the message was left alone,
+	// and Current/Text describe the change that confirm=true would apply.
+	Updated     bool   `json:"updated"`
+	ChannelID   string `json:"channel_id"`
+	ChannelName string `json:"channel_name,omitempty"`
+	TS          string `json:"ts"`
+	// Current is the message as it exists right now, so the caller can see what the
+	// update would overwrite. See targetNote for why it may be absent.
+	Current     *client.SlackMessageSummary `json:"current,omitempty"`
+	CurrentNote string                      `json:"current_note,omitempty"`
+	// Text is the requested new body before confirming, and Slack's echo of the
+	// stored body afterwards.
+	Text string `json:"text,omitempty"`
+}
 
 // DeleteSlackMessageInput is the input for delete_slack_message.
 type DeleteSlackMessageInput struct {
 	ChannelID string `json:"channel_id,omitempty" jsonschema:"削除対象のチャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
 	TS        string `json:"ts" jsonschema:"削除対象メッセージのts。post_slack_message_as_user の戻り値を利用できます。"`
+	Confirm   bool   `json:"confirm,omitempty" jsonschema:"true にすると実際に削除します。false（省略時）の場合は削除せず、削除対象メッセージの内容を返します。削除は取り消せないため、プレビューを確認したうえで confirm=true を指定して再実行してください。"`
 }
 
 // DeleteSlackMessageOutput is the structured output for delete_slack_message.
-type DeleteSlackMessageOutput = client.DeleteWebAPIMessageResponse
+type DeleteSlackMessageOutput struct {
+	OK bool `json:"ok"`
+	// Deleted is false when confirm was omitted/false: nothing was removed, and
+	// Target describes what confirm=true would remove.
+	Deleted     bool   `json:"deleted"`
+	ChannelID   string `json:"channel_id"`
+	ChannelName string `json:"channel_name,omitempty"`
+	TS          string `json:"ts"`
+	// Target is the message that would be (or was) deleted. See targetNote for why
+	// it may be absent.
+	Target     *client.SlackMessageSummary `json:"target,omitempty"`
+	TargetNote string                      `json:"target_note,omitempty"`
+}
+
+// targetNote explains an absent Current/Target in an update/delete preview, so a
+// caller is told that the old content is unknown rather than being left to read the
+// missing field as "the message is empty".
+const (
+	targetNoteNotFound   = "対象メッセージが見つかりませんでした。ts とチャンネルを確認してください。"
+	targetNoteUnreadable = "対象メッセージを取得できませんでした（履歴スコープ不足など）。内容を確認せずに実行することになります。"
+)
+
+// resolvedTarget describes the message an update or delete would act on.
+type resolvedTarget struct {
+	ChannelID   string
+	ChannelName string
+	Message     *client.SlackMessageSummary
+	Note        string
+}
+
+// resolveTarget looks up the destination channel's name and the message at ts, so
+// update/delete can show which message in which channel is about to change.
+//
+// Failing to read the target is deliberately not an error. chat.update and chat.delete
+// require no history scope, so a token may be fully authorized to destroy a message it
+// cannot read; refusing to proceed would break that legitimate setup. The inability to
+// show the old content is reported through Note instead, leaving the human to decide
+// whether to confirm blind. A channel that cannot be resolved at all is still an
+// error, since that means the destination itself is in doubt.
+func (t *SlackTools) resolveTarget(ctx context.Context, channelID, ts string) (resolvedTarget, error) {
+	channelInfo, err := t.client.GetChannelInfo(ctx, client.GetChannelInfoOptions{ChannelID: channelID})
+	if err != nil {
+		return resolvedTarget{}, err
+	}
+
+	target := resolvedTarget{
+		ChannelID:   channelInfo.Channel.ID,
+		ChannelName: channelInfo.Channel.Name,
+	}
+
+	message, err := t.client.GetMessage(ctx, target.ChannelID, ts)
+	switch {
+	case err != nil:
+		target.Note = targetNoteUnreadable
+	case message == nil:
+		target.Note = targetNoteNotFound
+	default:
+		target.Message = message
+	}
+	return target, nil
+}
 
 func (t *SlackTools) previewSlackMessage(_ context.Context, _ *mcp.CallToolRequest, in PostSlackMessageInput) (*mcp.CallToolResult, PreviewSlackMessageOutput, error) {
+	if err := in.validate(); err != nil {
+		return nil, PreviewSlackMessageOutput{}, err
+	}
+
 	payload, err := t.client.PreviewMessage(in.toMessage(in.ThreadTS))
 	if err != nil {
 		return nil, PreviewSlackMessageOutput{}, err
@@ -191,6 +290,10 @@ func (t *SlackTools) previewSlackMessage(_ context.Context, _ *mcp.CallToolReque
 // always see what would be posted before it happens, rather than relying on them to
 // call preview_slack_message first.
 func (t *SlackTools) postSlackMessage(ctx context.Context, _ *mcp.CallToolRequest, in PostSlackMessageInput) (*mcp.CallToolResult, PostSlackMessageOutput, error) {
+	if err := in.validate(); err != nil {
+		return nil, PostSlackMessageOutput{}, err
+	}
+
 	payload, err := t.client.PreviewMessage(in.toMessage(in.ThreadTS))
 	if err != nil {
 		return nil, PostSlackMessageOutput{}, err
@@ -221,6 +324,10 @@ func (t *SlackTools) postSlackMessage(ctx context.Context, _ *mcp.CallToolReques
 // post_slack_message_as_user call would notify before it happens. Shared by
 // previewSlackMessageAsUser and postSlackMessageAsUser.
 func (t *SlackTools) buildWebAPIPreview(ctx context.Context, in PostSlackMessageAsUserInput) (PreviewSlackMessageAsUserOutput, error) {
+	if err := in.validate(); err != nil {
+		return PreviewSlackMessageAsUserOutput{}, err
+	}
+
 	payload, err := t.client.PreviewWebAPIMessage(in.toWebAPIMessage(in.ChannelID, in.ThreadTS))
 	if err != nil {
 		return PreviewSlackMessageAsUserOutput{}, err
@@ -304,10 +411,40 @@ func (t *SlackTools) postSlackMessageAsUser(ctx context.Context, _ *mcp.CallTool
 	return nil, out, nil
 }
 
+// updateSlackMessage resolves the target message's current content unconditionally,
+// then only rewrites it when in.Confirm is set, mirroring the confirm gate on the post
+// tools. An update silently discards whatever the message said before, so the caller
+// is shown the old body alongside the new one before that becomes irreversible.
 func (t *SlackTools) updateSlackMessage(ctx context.Context, _ *mcp.CallToolRequest, in UpdateSlackMessageInput) (*mcp.CallToolResult, UpdateSlackMessageOutput, error) {
-	out, err := t.client.UpdateWebAPIMessage(ctx, client.UpdateWebAPIMessage{
-		ChannelID:   in.ChannelID,
-		TS:          in.TS,
+	ts := strings.TrimSpace(in.TS)
+	if ts == "" {
+		return nil, UpdateSlackMessageOutput{}, fmt.Errorf("slack: ts is required")
+	}
+	if strings.TrimSpace(in.Text) == "" && len(in.Blocks) == 0 && len(in.Attachments) == 0 {
+		return nil, UpdateSlackMessageOutput{}, fmt.Errorf("slack: text, blocks, or attachments is required")
+	}
+
+	target, err := t.resolveTarget(ctx, in.ChannelID, ts)
+	if err != nil {
+		return nil, UpdateSlackMessageOutput{}, err
+	}
+
+	out := UpdateSlackMessageOutput{
+		OK:          true,
+		ChannelID:   target.ChannelID,
+		ChannelName: target.ChannelName,
+		TS:          ts,
+		Current:     target.Message,
+		CurrentNote: target.Note,
+		Text:        in.Text,
+	}
+	if !in.Confirm {
+		return nil, out, nil
+	}
+
+	updated, err := t.client.UpdateWebAPIMessage(ctx, client.UpdateWebAPIMessage{
+		ChannelID:   target.ChannelID,
+		TS:          ts,
 		Text:        in.Text,
 		Blocks:      in.Blocks,
 		Attachments: in.Attachments,
@@ -315,15 +452,44 @@ func (t *SlackTools) updateSlackMessage(ctx context.Context, _ *mcp.CallToolRequ
 	if err != nil {
 		return nil, UpdateSlackMessageOutput{}, err
 	}
-
-	return nil, *out, nil
+	out.Updated = true
+	out.TS = updated.TS
+	out.Text = updated.Text
+	return nil, out, nil
 }
 
+// deleteSlackMessage resolves the target message unconditionally, then only removes it
+// when in.Confirm is set. Deletion is the least reversible operation this server
+// exposes — Slack keeps no undo — so it gets the same gate as posting, with the body
+// of the doomed message included so a human can check it really is the intended one.
 func (t *SlackTools) deleteSlackMessage(ctx context.Context, _ *mcp.CallToolRequest, in DeleteSlackMessageInput) (*mcp.CallToolResult, DeleteSlackMessageOutput, error) {
-	out, err := t.client.DeleteWebAPIMessage(ctx, in.ChannelID, in.TS)
+	ts := strings.TrimSpace(in.TS)
+	if ts == "" {
+		return nil, DeleteSlackMessageOutput{}, fmt.Errorf("slack: ts is required")
+	}
+
+	target, err := t.resolveTarget(ctx, in.ChannelID, ts)
 	if err != nil {
 		return nil, DeleteSlackMessageOutput{}, err
 	}
 
-	return nil, *out, nil
+	out := DeleteSlackMessageOutput{
+		OK:          true,
+		ChannelID:   target.ChannelID,
+		ChannelName: target.ChannelName,
+		TS:          ts,
+		Target:      target.Message,
+		TargetNote:  target.Note,
+	}
+	if !in.Confirm {
+		return nil, out, nil
+	}
+
+	deleted, err := t.client.DeleteWebAPIMessage(ctx, target.ChannelID, ts)
+	if err != nil {
+		return nil, DeleteSlackMessageOutput{}, err
+	}
+	out.Deleted = true
+	out.TS = deleted.TS
+	return nil, out, nil
 }

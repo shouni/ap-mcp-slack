@@ -38,8 +38,8 @@ func TestLoadAllowsTokenOnly(t *testing.T) {
 	}
 }
 
-func TestLoadAllowsMissingSlackCredentials(t *testing.T) {
-	t.Setenv("MCP_SLACK_WEBHOOK_URL", "")
+func TestLoadAllowsWebhookOnly(t *testing.T) {
+	t.Setenv("MCP_SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/T000/B000/secret")
 	t.Setenv("MCP_SLACK_USER_TOKEN", "")
 	t.Setenv("MCP_SLACK_TOKEN", "")
 	t.Setenv("MCP_SLACK_BOT_TOKEN", "")
@@ -48,7 +48,21 @@ func TestLoadAllowsMissingSlackCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.SlackWebhookURL != "" || cfg.SlackToken != "" {
-		t.Fatalf("config = %+v, want empty Slack credentials", cfg)
+	if cfg.SlackToken != "" {
+		t.Fatalf("SlackToken = %q, want empty", cfg.SlackToken)
+	}
+}
+
+// TestLoadRequiresSlackCredentials pins the startup failure: with neither transport
+// configured every tool would be gated out of registration, leaving a server that
+// connects successfully and advertises nothing.
+func TestLoadRequiresSlackCredentials(t *testing.T) {
+	t.Setenv("MCP_SLACK_WEBHOOK_URL", "")
+	t.Setenv("MCP_SLACK_USER_TOKEN", "")
+	t.Setenv("MCP_SLACK_TOKEN", "")
+	t.Setenv("MCP_SLACK_BOT_TOKEN", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want missing-credentials error")
 	}
 }

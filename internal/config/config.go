@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
@@ -19,6 +20,12 @@ type Config struct {
 }
 
 // Load reads environment variables.
+//
+// At least one of the webhook URL or the Web API token must be present. Tools are
+// registered per configured transport, so with neither set the server would start
+// cleanly, advertise zero tools, and leave the operator to work out from an empty
+// tool list that their environment never reached the process. Failing here puts the
+// reason on stderr at startup instead.
 func Load() (*Config, error) {
 	webhookURL := strings.TrimSpace(os.Getenv("MCP_SLACK_WEBHOOK_URL"))
 	slackToken := firstNonEmptyEnv("MCP_SLACK_USER_TOKEN", "MCP_SLACK_TOKEN", "MCP_SLACK_BOT_TOKEN")
@@ -26,6 +33,10 @@ func Load() (*Config, error) {
 	slackSourceLabel := strings.TrimSpace(os.Getenv("MCP_SLACK_SOURCE_LABEL"))
 	if slackSourceLabel == "" {
 		slackSourceLabel = defaultSlackSourceLabel
+	}
+
+	if webhookURL == "" && slackToken == "" {
+		return nil, fmt.Errorf("config: set MCP_SLACK_WEBHOOK_URL or MCP_SLACK_USER_TOKEN/MCP_SLACK_TOKEN/MCP_SLACK_BOT_TOKEN")
 	}
 
 	return &Config{

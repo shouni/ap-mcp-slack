@@ -32,17 +32,6 @@ func TestListSlackChannels(t *testing.T) {
 	}
 }
 
-func TestListSlackChannelsRequiresToken(t *testing.T) {
-	t.Parallel()
-
-	session := newTestSession(t, client.SlackClientConfig{})
-
-	result := callTool(t, session, "list_slack_channels", map[string]any{}, nil)
-	if !result.IsError {
-		t.Fatal("CallTool() IsError = false, want token error")
-	}
-}
-
 func TestListJoinedSlackChannels(t *testing.T) {
 	t.Parallel()
 

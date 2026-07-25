@@ -31,11 +31,6 @@ type SlackClientConfig struct {
 	SourceLabel string
 }
 
-// NewSlackClient creates a SlackClient.
-func NewSlackClient(webhookURL string) *SlackClient {
-	return NewSlackClientWithConfig(SlackClientConfig{WebhookURL: webhookURL})
-}
-
 // NewSlackClientWithConfig creates a SlackClient with explicit configuration.
 func NewSlackClientWithConfig(cfg SlackClientConfig) *SlackClient {
 	return &SlackClient{
