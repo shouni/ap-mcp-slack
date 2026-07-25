@@ -156,14 +156,14 @@ func (w *webAPITransport) ResolveUser(ctx context.Context, name, email, teamID s
 		return nil, err
 	}
 
-	lowerName := strings.ToLower(name)
 	var candidates []SlackUserSummary
 	for _, user := range users {
-		if userNameEquals(user, lowerName) {
+		if userNameEquals(user, name) {
 			candidates = append(candidates, user)
 		}
 	}
 	if len(candidates) == 0 {
+		lowerName := strings.ToLower(name)
 		for _, user := range users {
 			if userMatchesQuery(user, lowerName) {
 				candidates = append(candidates, user)
@@ -179,7 +179,7 @@ func (w *webAPITransport) ResolveUser(ctx context.Context, name, email, teamID s
 		// substring hit is not: an unscanned member could match just as well, which
 		// would have made this ambiguous rather than found.
 		resolved := resolvedUserResponse(candidates[0])
-		if truncated && !userNameEquals(candidates[0], lowerName) {
+		if truncated && !userNameEquals(candidates[0], name) {
 			resolved.SearchTruncated = true
 		}
 		return resolved, nil
@@ -188,15 +188,15 @@ func (w *webAPITransport) ResolveUser(ctx context.Context, name, email, teamID s
 	}
 }
 
-// userNameEquals reports whether lowerName exactly matches (case-insensitively) any of
-// user's name fields.
-func userNameEquals(user SlackUserSummary, lowerName string) bool {
-	for _, field := range []string{user.Name, user.RealName, user.DisplayName} {
-		if strings.ToLower(field) == lowerName {
-			return true
-		}
-	}
-	return false
+// userNameEquals reports whether name matches any of user's name fields, ignoring case.
+//
+// EqualFold rather than lowercasing both sides: this runs once per scanned member (up to
+// resolveUserSearchCap of them), and ToLower allocates a new string for every field that
+// isn't already lower-case, which is most real names. EqualFold compares in place.
+func userNameEquals(user SlackUserSummary, name string) bool {
+	return strings.EqualFold(user.Name, name) ||
+		strings.EqualFold(user.RealName, name) ||
+		strings.EqualFold(user.DisplayName, name)
 }
 
 // collectActiveUsers pages through users.list, excluding deleted users, up to

@@ -529,6 +529,74 @@ func TestDeleteSlackMessageWithoutChannelReadScope(t *testing.T) {
 	}
 }
 
+// TestDeleteSlackMessageWithoutChannelReadScopeUsesDefaultChannel is the same case with
+// the destination coming from MCP_SLACK_CHANNEL_ID instead of an argument. Whether a
+// destination exists must be decided from the config, not inferred from a failed
+// conversations.info: that lookup resolves the default itself, so reading its failure as
+// "no channel was given" turns every unreadable default-channel delete into a refusal.
+func TestDeleteSlackMessageWithoutChannelReadScopeUsesDefaultChannel(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":false,"error":"missing_scope"}`))
+	}))
+	defer server.Close()
+
+	session := newTestSession(t, client.SlackClientConfig{
+		Token:            "xoxp-test",
+		DefaultChannelID: "C123",
+		APIBaseURL:       server.URL,
+	})
+
+	var out DeleteSlackMessageOutput
+	result := callTool(t, session, "delete_slack_message", map[string]any{
+		"ts": "1700000000.000100",
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, want a preview using the default channel, content = %+v", result.Content)
+	}
+	if out.ChannelID != "C123" {
+		t.Fatalf("out.ChannelID = %q, want the default channel C123", out.ChannelID)
+	}
+	if !strings.Contains(out.TargetNote, "チャンネル名") {
+		t.Fatalf("out.TargetNote = %q, want the unresolved-channel warning", out.TargetNote)
+	}
+}
+
+// TestUpdateSlackMessageWithoutChannelReadScopeUsesDefaultChannel is the update-side
+// counterpart: chat.update needs no read scope either.
+func TestUpdateSlackMessageWithoutChannelReadScopeUsesDefaultChannel(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":false,"error":"missing_scope"}`))
+	}))
+	defer server.Close()
+
+	session := newTestSession(t, client.SlackClientConfig{
+		Token:            "xoxp-test",
+		DefaultChannelID: "C123",
+		APIBaseURL:       server.URL,
+	})
+
+	var out UpdateSlackMessageOutput
+	result := callTool(t, session, "update_slack_message", map[string]any{
+		"ts":   "1700000000.000100",
+		"text": "*updated*",
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, want a preview using the default channel, content = %+v", result.Content)
+	}
+	if out.ChannelID != "C123" || out.Payload.ChannelID != "C123" {
+		t.Fatalf("out = %+v, want the default channel C123 in both the output and the payload", out)
+	}
+	if !strings.Contains(out.CurrentNote, "チャンネル名") {
+		t.Fatalf("out.CurrentNote = %q, want the unresolved-channel warning", out.CurrentNote)
+	}
+}
+
 // TestDeleteSlackMessageRequiresResolvableChannel pins the one case that stays an
 // error: with no channel_id argument and no default channel there is no destination to
 // preview or delete from.

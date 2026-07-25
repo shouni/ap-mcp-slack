@@ -107,8 +107,10 @@ Slackを変更するツール（`post_slack_message` / `post_slack_message_as_us
 | 状況 | 挙動 |
 | --- | --- |
 | メッセージを読めない（履歴スコープ不足など） | `current` / `target` を省略し、note に理由を記載 |
-| チャンネル名を解決できない（`channels:read` / `groups:read` 不足など） | `channel_name` を省略し、`channel_id` はそのまま返して note に理由を記載 |
+| チャンネル名を解決できない（`channels:read` / `groups:read` 不足など） | `channel_name` を省略し、`channel_id`（省略時は `MCP_SLACK_CHANNEL_ID` の値）はそのまま返して note に理由を記載 |
 | `channel_id` 未指定かつ `MCP_SLACK_CHANNEL_ID` 未設定 | エラー（宛先が特定できず、操作対象が存在しない） |
+
+宛先の有無は設定から判定するため、`channel_id` を省略して `MCP_SLACK_CHANNEL_ID` に頼る場合も、`conversations.info` が失敗しても操作はブロックされません。
 
 note が入っている場合は**内容を確認しないまま実行することになる**というシグナルなので、承認前に必ず確認してください。ここでエラーにしてしまうと、そのメッセージを削除する手段がこのサーバーから一切失われるため、あえて降格して人間に判断を委ねています。
 

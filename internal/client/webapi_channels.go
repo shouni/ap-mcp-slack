@@ -86,9 +86,9 @@ func (w *webAPITransport) GetChannelInfo(ctx context.Context, opts GetChannelInf
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	channelID := w.channelIDOrDefault(opts.ChannelID)
-	if channelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
+	channelID, err := w.ResolveChannelID(opts.ChannelID)
+	if err != nil {
+		return nil, err
 	}
 
 	channel, err := w.slackAPIClient.GetConversationInfoContext(ctx, &slackapi.GetConversationInfoInput{

@@ -231,25 +231,27 @@ type resolvedTarget struct {
 // read; refusing to proceed would break that legitimate setup, leaving the caller with
 // a message they can delete through no tool this server offers. What could not be
 // resolved is reported through Note instead, leaving the human to decide whether to
-// confirm on partial information. Only an entirely undetermined destination (no
-// channel_id argument and no MCP_SLACK_CHANNEL_ID) is still an error, since then there
-// is nothing to act on.
+// confirm on partial information.
+//
+// Whether a destination exists at all is therefore settled first, through
+// ResolveChannelID, and is the only thing here that can fail. Inferring it from a failed
+// conversations.info instead would read every unreadable channel as a missing one: the
+// lookup resolves the default channel internally, so its failure says nothing about
+// whether a default was configured.
 func (t *SlackTools) resolveTarget(ctx context.Context, channelID, ts string) (resolvedTarget, error) {
-	var target resolvedTarget
+	resolvedChannelID, err := t.client.ResolveChannelID(channelID)
+	if err != nil {
+		return resolvedTarget{}, err
+	}
+
+	target := resolvedTarget{ChannelID: resolvedChannelID}
 	var notes []string
 
-	channelInfo, err := t.client.GetChannelInfo(ctx, client.GetChannelInfoOptions{ChannelID: channelID})
-	switch {
-	case err == nil:
+	if channelInfo, err := t.client.GetChannelInfo(ctx, client.GetChannelInfoOptions{ChannelID: resolvedChannelID}); err == nil {
 		target.ChannelID = channelInfo.Channel.ID
 		target.ChannelName = channelInfo.Channel.Name
-	case strings.TrimSpace(channelID) != "":
-		target.ChannelID = strings.TrimSpace(channelID)
+	} else {
 		notes = append(notes, targetNoteUnnamedChan)
-	default:
-		// No channel came back and none was passed in, so the default channel is
-		// missing too: there is no destination to preview or act on.
-		return resolvedTarget{}, err
 	}
 
 	message, err := t.client.GetMessage(ctx, target.ChannelID, ts)

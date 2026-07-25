@@ -76,9 +76,9 @@ func (w *webAPITransport) GetConversationHistory(ctx context.Context, opts Conve
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	channelID := w.channelIDOrDefault(opts.ChannelID)
-	if channelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
+	channelID, err := w.ResolveChannelID(opts.ChannelID)
+	if err != nil {
+		return nil, err
 	}
 	limit, err := normalizeListLimit(opts.Limit, defaultMessageListLimit, maxMessageListLimit)
 	if err != nil {
@@ -112,9 +112,9 @@ func (w *webAPITransport) GetConversationReplies(ctx context.Context, opts Conve
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	channelID := w.channelIDOrDefault(opts.ChannelID)
-	if channelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
+	channelID, err := w.ResolveChannelID(opts.ChannelID)
+	if err != nil {
+		return nil, err
 	}
 	ts := strings.TrimSpace(opts.TS)
 	if ts == "" {
@@ -168,9 +168,9 @@ func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) 
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	channelID = w.channelIDOrDefault(channelID)
-	if channelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
+	channelID, err := w.ResolveChannelID(channelID)
+	if err != nil {
+		return nil, err
 	}
 	ts = strings.TrimSpace(ts)
 	if ts == "" {

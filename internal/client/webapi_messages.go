@@ -38,10 +38,11 @@ func (w *webAPITransport) PreviewWebAPIMessage(msg WebAPIMessage) (WebAPIMessage
 	if strings.TrimSpace(msg.Text) == "" {
 		return WebAPIMessage{}, fmt.Errorf("slack: text is required")
 	}
-	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
-	if msg.ChannelID == "" {
-		return WebAPIMessage{}, fmt.Errorf("slack: channel_id is required")
+	resolvedChannelID, err := w.ResolveChannelID(msg.ChannelID)
+	if err != nil {
+		return WebAPIMessage{}, err
 	}
+	msg.ChannelID = resolvedChannelID
 	msg.Blocks = appendSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
 	if _, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments); err != nil {
 		return WebAPIMessage{}, err
@@ -108,10 +109,11 @@ type UpdateWebAPIMessageResponse struct {
 // An update overwrites content irreversibly, so the caller is shown the resolved
 // replacement — footer and all — rather than just the raw text it passed in.
 func (w *webAPITransport) PreviewUpdateWebAPIMessage(msg UpdateWebAPIMessage) (UpdateWebAPIMessage, error) {
-	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
-	if msg.ChannelID == "" {
-		return UpdateWebAPIMessage{}, fmt.Errorf("slack: channel_id is required")
+	resolvedChannelID, err := w.ResolveChannelID(msg.ChannelID)
+	if err != nil {
+		return UpdateWebAPIMessage{}, err
 	}
+	msg.ChannelID = resolvedChannelID
 	msg.TS = strings.TrimSpace(msg.TS)
 	if msg.TS == "" {
 		return UpdateWebAPIMessage{}, fmt.Errorf("slack: ts is required")
@@ -163,9 +165,9 @@ func (w *webAPITransport) DeleteWebAPIMessage(ctx context.Context, channelID str
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	channelID = w.channelIDOrDefault(channelID)
-	if channelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
+	channelID, err := w.ResolveChannelID(channelID)
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(ts) == "" {
 		return nil, fmt.Errorf("slack: ts is required")
