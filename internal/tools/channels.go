@@ -8,31 +8,21 @@ import (
 	"ap-mcp-slack/internal/client"
 )
 
-// ListSlackChannelsInput is the input for list_slack_channels.
+// ListSlackChannelsInput is the input for list_slack_channels and
+// list_joined_slack_channels, which take the same parameters and differ only in
+// whether Slack scopes the listing to the token owner's memberships.
 type ListSlackChannelsInput struct {
 	Types           []string `json:"types,omitempty" jsonschema:"取得する会話種別。public_channel, private_channel, mpim, im を指定できます。省略時はSlack APIのデフォルト public_channel です。"`
 	ExcludeArchived bool     `json:"exclude_archived,omitempty" jsonschema:"trueの場合、アーカイブ済みチャンネルを除外します。"`
-	Limit           int      `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。"`
+	Limit           int      `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります。"`
 	Cursor          string   `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
 	TeamID          string   `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。"`
 	Sort            string   `json:"sort,omitempty" jsonschema:"取得した結果に適用する返却前の並び順。none, name_asc, name_desc, created_asc, created_desc を指定できます。省略時は name_asc です。"`
 }
 
-// ListSlackChannelsOutput is the structured output for list_slack_channels.
+// ListSlackChannelsOutput is the structured output for list_slack_channels and
+// list_joined_slack_channels.
 type ListSlackChannelsOutput = client.ListChannelsResponse
-
-// ListJoinedSlackChannelsInput is the input for list_joined_slack_channels.
-type ListJoinedSlackChannelsInput struct {
-	Types           []string `json:"types,omitempty" jsonschema:"取得する会話種別。public_channel, private_channel, mpim, im を指定できます。省略時はSlack APIのデフォルト public_channel です。"`
-	ExcludeArchived bool     `json:"exclude_archived,omitempty" jsonschema:"trueの場合、アーカイブ済みチャンネルを除外します。"`
-	Limit           int      `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。"`
-	Cursor          string   `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
-	TeamID          string   `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。"`
-	Sort            string   `json:"sort,omitempty" jsonschema:"取得した結果に適用する返却前の並び順。none, name_asc, name_desc, created_asc, created_desc を指定できます。省略時は name_asc です。"`
-}
-
-// ListJoinedSlackChannelsOutput is the structured output for list_joined_slack_channels.
-type ListJoinedSlackChannelsOutput = client.ListChannelsResponse
 
 // GetSlackChannelInfoInput is the input for get_slack_channel_info.
 type GetSlackChannelInfoInput struct {
@@ -88,8 +78,8 @@ func (t *SlackTools) listSlackChannels(ctx context.Context, _ *mcp.CallToolReque
 	return nil, *out, nil
 }
 
-func (t *SlackTools) listJoinedSlackChannels(ctx context.Context, _ *mcp.CallToolRequest, in ListJoinedSlackChannelsInput) (*mcp.CallToolResult, ListJoinedSlackChannelsOutput, error) {
-	out, err := t.client.ListJoinedChannels(ctx, client.ListJoinedChannelsOptions{
+func (t *SlackTools) listJoinedSlackChannels(ctx context.Context, _ *mcp.CallToolRequest, in ListSlackChannelsInput) (*mcp.CallToolResult, ListSlackChannelsOutput, error) {
+	out, err := t.client.ListJoinedChannels(ctx, client.ListChannelsOptions{
 		Types:           in.Types,
 		ExcludeArchived: in.ExcludeArchived,
 		Limit:           in.Limit,
@@ -98,7 +88,7 @@ func (t *SlackTools) listJoinedSlackChannels(ctx context.Context, _ *mcp.CallToo
 		Sort:            in.Sort,
 	})
 	if err != nil {
-		return nil, ListJoinedSlackChannelsOutput{}, err
+		return nil, ListSlackChannelsOutput{}, err
 	}
 
 	return nil, *out, nil

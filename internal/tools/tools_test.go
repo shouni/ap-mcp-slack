@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -72,12 +73,12 @@ func TestRegisterGatesToolsByConfiguredTransport(t *testing.T) {
 			name:    "token only",
 			cfg:     client.SlackClientConfig{Token: "xoxp-test"},
 			want:    []string{"post_slack_message_as_user", "delete_slack_message", "list_slack_users"},
-			notWant: []string{"post_slack_message", "preview_slack_message"},
+			notWant: []string{"post_slack_message"},
 		},
 		{
 			name:    "webhook only",
 			cfg:     client.SlackClientConfig{WebhookURL: "https://hooks.slack.com/services/T/B/X"},
-			want:    []string{"post_slack_message", "preview_slack_message"},
+			want:    []string{"post_slack_message"},
 			notWant: []string{"post_slack_message_as_user", "delete_slack_message", "list_slack_users"},
 		},
 		{
@@ -111,6 +112,25 @@ func TestRegisterGatesToolsByConfiguredTransport(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRegisterAdvertisesNoSeparatePreviewTools pins that previewing stays a mode of
+// the mutating tools rather than its own tool. A standalone preview_* tool is a second
+// path to the same payload that a model can reach for instead of the confirm-gated one,
+// and it leaves the gate as the only thing keeping an unreviewed post from going out.
+func TestRegisterAdvertisesNoSeparatePreviewTools(t *testing.T) {
+	t.Parallel()
+
+	session := newTestSession(t, client.SlackClientConfig{
+		Token:      "xoxp-test",
+		WebhookURL: "https://hooks.slack.com/services/T/B/X",
+	})
+
+	for name := range listToolNames(t, session) {
+		if strings.HasPrefix(name, "preview_") {
+			t.Errorf("tool %q registered, want previewing folded into confirm=false", name)
+		}
 	}
 }
 

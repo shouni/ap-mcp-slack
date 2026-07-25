@@ -14,7 +14,7 @@ type Container struct {
 }
 
 // NewContainer builds a Container from Config.
-func NewContainer(cfg *config.Config) (*Container, error) {
+func NewContainer(cfg *config.Config) *Container {
 	return &Container{
 		Config: cfg,
 		Slack: client.NewSlackClientWithConfig(client.SlackClientConfig{
@@ -23,5 +23,5 @@ func NewContainer(cfg *config.Config) (*Container, error) {
 			DefaultChannelID: cfg.SlackChannelID,
 			SourceLabel:      cfg.SlackSourceLabel,
 		}),
-	}, nil
+	}
 }

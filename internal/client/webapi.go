@@ -56,6 +56,22 @@ func (w *webAPITransport) channelIDOrDefault(channelID string) string {
 	return w.defaultChannelID
 }
 
+// ResolveChannelID applies MCP_SLACK_CHANNEL_ID to an omitted channelID and reports an
+// error when neither yields a destination. Every channel-scoped operation starts with
+// it, so they agree on what "no channel" means.
+//
+// It is exported so the tool layer can settle "is there a destination at all" without
+// calling Slack. That question has a definite answer offline, and answering it from a
+// failed lookup instead conflates it with "the destination exists but this token cannot
+// read it" — which for update/delete must stay a note on the preview rather than a
+// refusal to act.
+func (w *webAPITransport) ResolveChannelID(channelID string) (string, error) {
+	if resolved := w.channelIDOrDefault(channelID); resolved != "" {
+		return resolved, nil
+	}
+	return "", fmt.Errorf("slack: channel_id is required")
+}
+
 func normalizeSlackAPIBaseURL(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

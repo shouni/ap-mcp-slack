@@ -44,10 +44,7 @@ func TestNewContainerWiresConfigIntoTheClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			container, err := NewContainer(tc.cfg)
-			if err != nil {
-				t.Fatalf("NewContainer() error = %v", err)
-			}
+			container := NewContainer(tc.cfg)
 			if container.Slack == nil {
 				t.Fatal("Container.Slack = nil")
 			}

@@ -196,7 +196,7 @@ func TestListJoinedChannels(t *testing.T) {
 		Token:      "xoxp-test",
 		APIBaseURL: server.URL,
 	})
-	resp, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{
+	resp, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{
 		Types:           []string{"public_channel", "private_channel", "public_channel"},
 		ExcludeArchived: true,
 		Limit:           3,
@@ -243,7 +243,7 @@ func TestListJoinedChannelsKeepsPageOvershoot(t *testing.T) {
 		Token:      "xoxp-test",
 		APIBaseURL: server.URL,
 	})
-	resp, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{Limit: 1})
+	resp, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{Limit: 1})
 	if err != nil {
 		t.Fatalf("ListJoinedChannels() error = %v", err)
 	}
@@ -256,18 +256,18 @@ func TestListJoinedChannelsValidatesInputs(t *testing.T) {
 	t.Parallel()
 
 	client := NewSlackClientWithConfig(SlackClientConfig{})
-	if _, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{}); err == nil {
+	if _, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{}); err == nil {
 		t.Fatal("ListJoinedChannels() error = nil, want token error")
 	}
 
 	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
-	if _, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{Types: []string{"invalid"}}); err == nil {
+	if _, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{Types: []string{"invalid"}}); err == nil {
 		t.Fatal("ListJoinedChannels() error = nil, want type error")
 	}
-	if _, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{Sort: "updated_desc"}); err == nil {
+	if _, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{Sort: "updated_desc"}); err == nil {
 		t.Fatal("ListJoinedChannels() error = nil, want sort error")
 	}
-	if _, err := client.ListJoinedChannels(context.Background(), ListJoinedChannelsOptions{Limit: maxChannelListLimit + 1}); err == nil {
+	if _, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{Limit: maxChannelListLimit + 1}); err == nil {
 		t.Fatal("ListJoinedChannels() error = nil, want limit error")
 	}
 }

@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -67,6 +69,119 @@ func TestPostWebAPIMessage(t *testing.T) {
 	if got["thread_ts"] != "123.456" || got["icon_emoji"] != ":robot_face:" || got["unfurl_links"] != "false" || got["unfurl_media"] != "false" {
 		t.Fatalf("message options missing from payload: %+v", got)
 	}
+}
+
+// TestSentBlocksMatchPreviewedBlocks pins the invariant the confirm gate rests on: the
+// blocks a preview shows a human are byte-for-byte the blocks that reach Slack. The
+// source-label footer is the part most at risk — it is synthesized rather than supplied
+// by the caller, so a second implementation on the send path would drift silently, and
+// the human would have approved a payload that was never sent.
+func TestSentBlocksMatchPreviewedBlocks(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		text        string
+		blocks      []map[string]any
+		attachments []map[string]any
+	}{
+		{name: "text only", text: "*hello*"},
+		{
+			name: "caller supplied blocks",
+			text: "*hello*",
+			blocks: []map[string]any{
+				{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "*hello*"}},
+			},
+		},
+		{
+			name:        "text and attachments",
+			text:        "*hello*",
+			attachments: []map[string]any{{"fallback": "fallback text", "text": "attachment text"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, method := range []string{"chat.postMessage", "chat.update"} {
+				var sentBlocks string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if err := r.ParseForm(); err != nil {
+						t.Fatalf("parse form: %v", err)
+					}
+					sentBlocks = r.Form.Get("blocks")
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100","text":"*hello*"}`))
+				}))
+				defer server.Close()
+
+				client := NewSlackClientWithConfig(SlackClientConfig{
+					Token:            "xoxp-test",
+					DefaultChannelID: "C123",
+					APIBaseURL:       server.URL,
+					SourceLabel:      "ap-mcp-slack (MCP) 経由",
+				})
+
+				var previewedBlocks []map[string]any
+				var err error
+				switch method {
+				case "chat.postMessage":
+					var preview WebAPIMessage
+					preview, err = client.PreviewWebAPIMessage(WebAPIMessage{
+						Text: tc.text, Blocks: tc.blocks, Attachments: tc.attachments,
+					})
+					previewedBlocks = preview.Blocks
+					if err == nil {
+						_, err = client.PostWebAPIMessage(context.Background(), WebAPIMessage{
+							Text: tc.text, Blocks: tc.blocks, Attachments: tc.attachments,
+						})
+					}
+				case "chat.update":
+					var preview UpdateWebAPIMessage
+					preview, err = client.PreviewUpdateWebAPIMessage(UpdateWebAPIMessage{
+						TS: "1700000000.000100", Text: tc.text, Blocks: tc.blocks, Attachments: tc.attachments,
+					})
+					previewedBlocks = preview.Blocks
+					if err == nil {
+						_, err = client.UpdateWebAPIMessage(context.Background(), UpdateWebAPIMessage{
+							TS: "1700000000.000100", Text: tc.text, Blocks: tc.blocks, Attachments: tc.attachments,
+						})
+					}
+				}
+				if err != nil {
+					t.Fatalf("%s: error = %v", method, err)
+				}
+
+				// The footer must be there exactly once, and the body must survive it.
+				if len(previewedBlocks) != 2 {
+					t.Fatalf("%s: previewed blocks = %+v, want body + one source-label footer", method, previewedBlocks)
+				}
+				wantBlocks, marshalErr := json.Marshal(previewedBlocks)
+				if marshalErr != nil {
+					t.Fatalf("%s: marshal previewed blocks: %v", method, marshalErr)
+				}
+				if !jsonEqual(t, sentBlocks, string(wantBlocks)) {
+					t.Fatalf("%s: sent blocks = %s, want the previewed blocks %s", method, sentBlocks, wantBlocks)
+				}
+			}
+		})
+	}
+}
+
+// jsonEqual reports whether left and right decode to the same JSON value, so block
+// comparisons ignore key ordering, which neither Slack nor the encoders preserve.
+func jsonEqual(t *testing.T, left, right string) bool {
+	t.Helper()
+
+	var leftValue, rightValue any
+	if err := json.Unmarshal([]byte(left), &leftValue); err != nil {
+		t.Fatalf("unmarshal %q: %v", left, err)
+	}
+	if err := json.Unmarshal([]byte(right), &rightValue); err != nil {
+		t.Fatalf("unmarshal %q: %v", right, err)
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 func TestPostWebAPIMessageReturnsSlackError(t *testing.T) {

@@ -63,6 +63,11 @@ type ResolveUserResponse struct {
 	User       *SlackUserSummary  `json:"user,omitempty"`
 	Mention    string             `json:"mention,omitempty"`
 	Candidates []SlackUserSummary `json:"candidates,omitempty"`
+	// SearchTruncated reports that the name search stopped at resolveUserSearchCap
+	// members without scanning the whole workspace, so a "not_found" or "ambiguous"
+	// answer describes only the part that was searched. Without this a caller cannot
+	// tell "this person is not in the workspace" from "we gave up looking".
+	SearchTruncated bool `json:"search_truncated,omitempty"`
 }
 
 // ListUsers lists Slack workspace members through users.list. Deleted (deactivated)
@@ -79,18 +84,14 @@ func (w *webAPITransport) ListUsers(ctx context.Context, opts ListUsersOptions) 
 	}
 
 	query := strings.ToLower(strings.TrimSpace(opts.Query))
-	pagination := w.slackAPIClient.GetUsersPaginated(
-		slackapi.GetUsersOptionCursor(strings.TrimSpace(opts.Cursor)),
-		slackapi.GetUsersOptionLimit(userListPageSize),
-		slackapi.GetUsersOptionTeamID(strings.TrimSpace(opts.TeamID)),
-	)
-
-	users, nextCursor, err := collectUsers(ctx, pagination, limit, func(summary SlackUserSummary) bool {
-		if !opts.IncludeDeleted && summary.Deleted {
-			return false
-		}
-		return query == "" || userMatchesQuery(summary, query)
-	})
+	users, nextCursor, err := collectPages(ctx, "users.list", limit, userListPageSize, strings.TrimSpace(opts.Cursor),
+		w.fetchUserPage(strings.TrimSpace(opts.TeamID)),
+		func(summary SlackUserSummary) bool {
+			if !opts.IncludeDeleted && summary.Deleted {
+				return false
+			}
+			return query == "" || userMatchesQuery(summary, query)
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -150,21 +151,19 @@ func (w *webAPITransport) ResolveUser(ctx context.Context, name, email, teamID s
 		return resolvedUserResponse(*user), nil
 	}
 
-	users, err := w.collectActiveUsers(ctx, teamID)
+	users, truncated, err := w.collectActiveUsers(ctx, teamID)
 	if err != nil {
 		return nil, err
 	}
 
-	lowerName := strings.ToLower(name)
 	var candidates []SlackUserSummary
 	for _, user := range users {
-		if strings.ToLower(user.Name) == lowerName ||
-			strings.ToLower(user.RealName) == lowerName ||
-			strings.ToLower(user.DisplayName) == lowerName {
+		if userNameEquals(user, name) {
 			candidates = append(candidates, user)
 		}
 	}
 	if len(candidates) == 0 {
+		lowerName := strings.ToLower(name)
 		for _, user := range users {
 			if userMatchesQuery(user, lowerName) {
 				candidates = append(candidates, user)
@@ -174,66 +173,68 @@ func (w *webAPITransport) ResolveUser(ctx context.Context, name, email, teamID s
 
 	switch len(candidates) {
 	case 0:
-		return &ResolveUserResponse{OK: true, Status: ResolveUserStatusNotFound}, nil
+		return &ResolveUserResponse{OK: true, Status: ResolveUserStatusNotFound, SearchTruncated: truncated}, nil
 	case 1:
-		return resolvedUserResponse(candidates[0]), nil
+		// An exact single hit is trustworthy even from a truncated scan, but a single
+		// substring hit is not: an unscanned member could match just as well, which
+		// would have made this ambiguous rather than found.
+		resolved := resolvedUserResponse(candidates[0])
+		if truncated && !userNameEquals(candidates[0], name) {
+			resolved.SearchTruncated = true
+		}
+		return resolved, nil
 	default:
-		return &ResolveUserResponse{OK: true, Status: ResolveUserStatusAmbiguous, Candidates: candidates}, nil
+		return &ResolveUserResponse{OK: true, Status: ResolveUserStatusAmbiguous, Candidates: candidates, SearchTruncated: truncated}, nil
 	}
+}
+
+// userNameEquals reports whether name matches any of user's name fields, ignoring case.
+//
+// EqualFold rather than lowercasing both sides: this runs once per scanned member (up to
+// resolveUserSearchCap of them), and ToLower allocates a new string for every field that
+// isn't already lower-case, which is most real names. EqualFold compares in place.
+func userNameEquals(user SlackUserSummary, name string) bool {
+	return strings.EqualFold(user.Name, name) ||
+		strings.EqualFold(user.RealName, name) ||
+		strings.EqualFold(user.DisplayName, name)
 }
 
 // collectActiveUsers pages through users.list, excluding deleted users, up to
-// resolveUserSearchCap members.
-func (w *webAPITransport) collectActiveUsers(ctx context.Context, teamID string) ([]SlackUserSummary, error) {
-	pagination := w.slackAPIClient.GetUsersPaginated(
-		slackapi.GetUsersOptionLimit(userListPageSize),
-		slackapi.GetUsersOptionTeamID(strings.TrimSpace(teamID)),
-	)
-
-	users, _, err := collectUsers(ctx, pagination, resolveUserSearchCap, func(summary SlackUserSummary) bool {
-		return !summary.Deleted
-	})
-	return users, err
+// resolveUserSearchCap members. The second result reports whether the cap was reached
+// with more pages still outstanding, i.e. whether the workspace was scanned in full.
+func (w *webAPITransport) collectActiveUsers(ctx context.Context, teamID string) ([]SlackUserSummary, bool, error) {
+	users, nextCursor, err := collectPages(ctx, "users.list", resolveUserSearchCap, userListPageSize, "",
+		w.fetchUserPage(strings.TrimSpace(teamID)),
+		func(summary SlackUserSummary) bool {
+			return !summary.Deleted
+		})
+	if err != nil {
+		return nil, false, err
+	}
+	return users, nextCursor != "", nil
 }
 
-// collectUsers pages through pagination via Next, keeping only users for which keep
-// returns true, until limit users have been collected or Slack has no more pages. It
-// returns the collected users and the cursor for the next page (empty if exhausted),
-// and is shared by ListUsers and collectActiveUsers, which differ only in their limit
-// and keep filter.
-func collectUsers(ctx context.Context, pagination slackapi.UserPagination, limit int, keep func(SlackUserSummary) bool) ([]SlackUserSummary, string, error) {
-	users := make([]SlackUserSummary, 0, min(limit, userListPageSize))
-	seenCursors := map[string]struct{}{}
-	nextCursor := ""
-
-	for len(users) < limit {
-		var err error
-		pagination, err = pagination.Next(ctx)
+// fetchUserPage returns a pageFetcher over users.list for teamID. A fresh
+// UserPagination is built per page because slack-go fixes the per-request limit at
+// construction time, and collectPages narrows that limit to the outstanding shortfall
+// as it goes; the cursor is the only state that has to carry across pages.
+func (w *webAPITransport) fetchUserPage(teamID string) pageFetcher[SlackUserSummary] {
+	return func(ctx context.Context, cursor string, requestLimit int) ([]SlackUserSummary, string, error) {
+		page, err := w.slackAPIClient.GetUsersPaginated(
+			slackapi.GetUsersOptionCursor(cursor),
+			slackapi.GetUsersOptionLimit(requestLimit),
+			slackapi.GetUsersOptionTeamID(teamID),
+		).Next(ctx)
 		if err != nil {
-			return nil, "", fmt.Errorf("slack: users.list failed: %w", err)
+			return nil, "", err
 		}
 
-		for _, apiUser := range pagination.Users {
-			if len(users) >= limit {
-				break
-			}
-			summary := summarizeUser(apiUser)
-			if keep(summary) {
-				users = append(users, summary)
-			}
+		users := make([]SlackUserSummary, 0, len(page.Users))
+		for _, apiUser := range page.Users {
+			users = append(users, summarizeUser(apiUser))
 		}
-
-		nextCursor = strings.TrimSpace(pagination.Cursor)
-		if nextCursor == "" {
-			break
-		}
-		if _, ok := seenCursors[nextCursor]; ok {
-			return nil, "", fmt.Errorf("slack: users.list returned duplicate cursor %q", nextCursor)
-		}
-		seenCursors[nextCursor] = struct{}{}
+		return users, page.Cursor, nil
 	}
-
-	return users, nextCursor, nil
 }
 
 func summarizeUser(user slackapi.User) SlackUserSummary {
@@ -280,8 +281,8 @@ type ResolvedMention struct {
 }
 
 // ResolveMentions looks up each of userIDs via users.info. It is used by
-// preview_slack_message_as_user to show who a message's explicit mentions field will
-// actually notify, since the raw <@ID> tags embedded in the payload aren't
+// post_slack_message_as_user's preview to show who a message's explicit mentions field
+// will actually notify, since the raw <@ID> tags embedded in the payload aren't
 // human-readable on their own.
 func (w *webAPITransport) ResolveMentions(ctx context.Context, userIDs []string) ([]ResolvedMention, error) {
 	if err := w.requireToken(); err != nil {

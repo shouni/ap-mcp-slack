@@ -2,8 +2,11 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +69,83 @@ func TestListUsers(t *testing.T) {
 	}
 	if requests[1].Cursor != "cursor-2" {
 		t.Fatalf("second request = %+v", requests[1])
+	}
+}
+
+// TestListUsersLimitDoesNotSkipPastUnreturnedUsers pins that a small limit cannot lose
+// users. Slack's cursor resumes after the whole page, so truncating a page mid-way and
+// still handing back that cursor would make the skipped members unreachable: paging
+// with the returned next_cursor would jump straight over them. The page request is
+// therefore narrowed to the outstanding shortfall, and whatever a page does return is
+// kept even if it overshoots limit.
+func TestListUsersLimitDoesNotSkipPastUnreturnedUsers(t *testing.T) {
+	t.Parallel()
+
+	var gotLimits []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		gotLimits = append(gotLimits, r.Form.Get("limit"))
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"members":[
+			{"id":"U001","name":"alpha"},
+			{"id":"U002","name":"beta"}
+		],"response_metadata":{"next_cursor":"cursor-2"}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListUsers(context.Background(), ListUsersOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	if len(gotLimits) != 1 || gotLimits[0] != "2" {
+		t.Fatalf("requested limits = %v, want a single page asking for 2", gotLimits)
+	}
+	// Both members of the page Slack actually returned must come back, since
+	// next_cursor resumes past all of them.
+	if resp.Count != 2 || resp.Users[0].ID != "U001" || resp.Users[1].ID != "U002" {
+		t.Fatalf("users = %+v, want both members of the fetched page", resp.Users)
+	}
+	if resp.NextCursor != "cursor-2" {
+		t.Fatalf("next_cursor = %q, want cursor-2", resp.NextCursor)
+	}
+}
+
+// TestListUsersKeepsOverfullPage covers Slack returning more than was asked for, which
+// its pagination guide permits: the surplus is kept rather than dropped, because the
+// cursor moves past it either way.
+func TestListUsersKeepsOverfullPage(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"members":[
+			{"id":"U001","name":"alpha"},
+			{"id":"U002","name":"beta"},
+			{"id":"U003","name":"gamma"}
+		],"response_metadata":{"next_cursor":"cursor-2"}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListUsers(context.Background(), ListUsersOptions{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	if resp.Count != 3 {
+		t.Fatalf("count = %d, want all 3 members Slack returned: %+v", resp.Count, resp.Users)
+	}
+	if resp.NextCursor != "cursor-2" {
+		t.Fatalf("next_cursor = %q, want cursor-2", resp.NextCursor)
 	}
 }
 
@@ -323,6 +403,72 @@ func TestResolveUserByNameNotFound(t *testing.T) {
 	}
 	if resp.Status != ResolveUserStatusNotFound || resp.User != nil || resp.Candidates != nil {
 		t.Fatalf("response = %+v", resp)
+	}
+}
+
+// TestResolveUserByNameReportsTruncatedSearch covers a workspace larger than
+// resolveUserSearchCap: the scan stops early, so a "not_found" only means "not among
+// those searched". Without search_truncated a caller would read that as "this person is
+// not in the workspace" and act on it.
+func TestResolveUserByNameReportsTruncatedSearch(t *testing.T) {
+	t.Parallel()
+
+	var page int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		limit, err := strconv.Atoi(r.Form.Get("limit"))
+		if err != nil {
+			t.Fatalf("limit = %q: %v", r.Form.Get("limit"), err)
+		}
+		page++
+
+		members := make([]string, 0, limit)
+		for i := range limit {
+			members = append(members, fmt.Sprintf(`{"id":"U%d-%d","name":"member-%d-%d"}`, page, i, page, i))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		// Never runs out of pages, so the cap is what stops the scan.
+		_, _ = fmt.Fprintf(w, `{"ok":true,"members":[%s],"response_metadata":{"next_cursor":"cursor-%d"}}`,
+			strings.Join(members, ","), page+1)
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ResolveUser(context.Background(), "zzz-nobody", "", "")
+	if err != nil {
+		t.Fatalf("ResolveUser() error = %v", err)
+	}
+	if resp.Status != ResolveUserStatusNotFound {
+		t.Fatalf("status = %q, want not_found", resp.Status)
+	}
+	if !resp.SearchTruncated {
+		t.Fatal("SearchTruncated = false, want true when the cap stopped the scan")
+	}
+}
+
+// TestResolveUserByNameExactMatchIsNotTruncated pins that an exact hit is reported as
+// trustworthy even from a capped scan: no unscanned member could have matched better.
+func TestResolveUserByNameExactMatchIsNotTruncated(t *testing.T) {
+	t.Parallel()
+
+	server := newResolveByNameTestServer(t)
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ResolveUser(context.Background(), "alice", "", "")
+	if err != nil {
+		t.Fatalf("ResolveUser() error = %v", err)
+	}
+	if resp.SearchTruncated {
+		t.Fatalf("SearchTruncated = true, want false for a fully scanned workspace: %+v", resp)
 	}
 }
 

@@ -8,14 +8,20 @@
 
 | 設定 | 登録されるツール |
 | --- | --- |
-| `MCP_SLACK_WEBHOOK_URL` のみ | `preview_slack_message` / `post_slack_message` |
+| `MCP_SLACK_WEBHOOK_URL` のみ | `post_slack_message` |
 | トークンのみ（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`） | Web API 系の全ツール |
 | 両方 | すべて |
 | どちらも未設定 | 起動時にエラー終了します |
 
 これは、MCPクライアント側のモデルが「広告されているツール一覧」から選択するためです。認証情報のないトランスポートのツールを一覧に載せると、モデルがそれを選び、payloadを組み立て、人間にプレビューを承認させたうえで送信時に初めて失敗する、という最悪の順序になります。使えないツールは最初から見せません。
 
-## `preview_slack_message` / `post_slack_message`
+## プレビューは `confirm` の既定動作です
+
+Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて、`confirm` を省略/`false` にすると**Slackに一切書き込まず**、実際に送信される payload をプレビューとして返します。
+
+`preview_*` という独立したツールは意図的に用意していません。同じ payload に到達する経路が2つあると、モデルがどちらを選ぶかに安全性が依存してしまいます。プレビューは「モデルがすでに選んだツールの既定の動作」であり、別に呼び出しておくべき前段の手順ではありません。
+
+## `post_slack_message`
 
 | フィールド | 必須 | 説明 |
 | --- | :---: | --- |
@@ -27,9 +33,9 @@
 | `unfurl_links` | 任意 | リンク展開の制御。 |
 | `unfurl_media` | 任意 | メディア展開の制御。 |
 | `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。 |
-| `confirm` | 任意（`post_slack_message` のみ） | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、プレビューのみ返します。 |
+| `confirm` | 任意 | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、プレビューのみ返します。 |
 
-## `preview_slack_message_as_user` / `post_slack_message_as_user`
+## `post_slack_message_as_user`
 
 | フィールド | 必須 | 説明 |
 | --- | :---: | --- |
@@ -41,20 +47,20 @@
 | `icon_emoji` | 任意 | 投稿者アイコンとして使うSlack絵文字名。例: `:robot_face:` |
 | `unfurl_links` | 任意 | リンク展開の制御。 |
 | `unfurl_media` | 任意 | メディア展開の制御。 |
-| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。`preview_slack_message_as_user` / `post_slack_message_as_user`（`confirm`未指定時）ではさらに `users.info` で表示名解決した結果を `mentions` フィールド（`id`/`real_name`/`display_name`/`mention` など）として返します。 |
-| `confirm` | 任意（`post_slack_message_as_user` のみ） | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返します。 |
+| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。プレビュー時（`confirm`未指定時）はさらに `users.info` で表示名解決した結果を `mentions` フィールド（`id`/`real_name`/`display_name`/`mention` など）として返します。 |
+| `confirm` | 任意 | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返します。 |
 
-`preview_slack_message` / `preview_slack_message_as_user` は Slack へ投稿せず、source label 付与後の payload を返します。`preview_slack_message_as_user` は送信先チャンネル解決のため `channel_id` または `MCP_SLACK_CHANNEL_ID` が必要です。さらに `preview_slack_message_as_user` は、投稿前に一目で確認できるよう次の情報も追加で解決して返します（`conversations.info` / `users.info` / `conversations.replies` を追加で呼び出すため、対応するOAuthスコープが必要です）。
+`post_slack_message_as_user` のプレビューは、送信先チャンネル解決のため `channel_id` または `MCP_SLACK_CHANNEL_ID` を必要とします。投稿前に一目で確認できるよう、`payload`（source label 付与後の実送信内容）に加えて次の情報も解決して返します（`conversations.info` / `users.info` / `conversations.replies` を追加で呼び出すため、対応するOAuthスコープが必要です）。
 
 - `channel_name`: 送信先チャンネルの表示名（`channel_id` を `conversations.info` で解決）
 - `mentions`: `mentions` フィールドで渡した各ユーザーIDの表示名（`users.info` で解決）
 - `thread_parent`: `thread_ts` を指定した場合、返信先となる親メッセージの内容（`conversations.replies` で取得）
 
-`post_slack_message_as_user` も `confirm` を省略/`false` にすると、実際には投稿せず上記と同じプレビュー情報（`channel_name`/`mentions`/`thread_parent`、`posted: false` と合わせて）を返します。内容を確認した上で同じ入力に `confirm: true` を足して再実行すると、実際に投稿されます（`posted: true` と `ts` が返ります）。
+内容を確認した上で同じ入力に `confirm: true` を足して再実行すると、実際に投稿されます（`posted: true` と `ts` が返ります）。`payload` は `confirm` の有無にかかわらず同一で、プレビューで見た payload がそのまま Slack に送られます。
 
 `post_slack_message`（Webhook側）も同様に `confirm` を省略/`false` にすると投稿せず `posted: false` を返しますが、Webhookには宛先チャンネルIDの概念がなく`conversations.info`等も呼ばないため、`mentions` は表示名解決されない生のSlackユーザーID配列のまま返り、`channel_name` / `thread_parent` は含まれません。
 
-なお `preview_slack_message` は Slack へ何も送らないにもかかわらず `MCP_SLACK_WEBHOOK_URL` を要求します。プレビューは人間が承認する対象であり、そもそも配送不可能な payload を承認させてしまうと、設定ミスが発覚するのが「承認後」になるためです。
+なお `post_slack_message` は `confirm` 未指定（Slackへ何も送らない場合）でも `MCP_SLACK_WEBHOOK_URL` を要求します。プレビューは人間が承認する対象であり、そもそも配送不可能な payload を承認させてしまうと、設定ミスが発覚するのが「承認後」になるためです。
 
 ### `mentions` と `blocks` の併用について
 
@@ -77,7 +83,10 @@
 
 - `channel_name`: 対象チャンネルの表示名
 - `current`: **更新前の**メッセージ内容（上書きで消える内容）
+- `payload`: 適用しようとしている更新後の payload（source label 付与後、`blocks` / `attachments` を含む実送信内容）
 - `text`: 適用しようとしている更新後の本文
+
+`text` だけでは足りないため `payload` も返します。`blocks` のみを指定した更新では `text` は空のままなので、`text` だけを見せると「上書き後の内容が空」に見え、人間が中身を確認せずに承認することになります。
 
 ## `delete_slack_message`
 
@@ -89,9 +98,21 @@
 
 削除はこのサーバーが提供する操作の中で最も取り返しがつかない（Slackにundoはありません）ため、投稿系と同じ `confirm` ゲートを持ちます。`confirm` を省略/`false` にすると削除は行わず、`deleted: false` と `channel_name`、そして `target`（削除されるメッセージそのものの内容）を返します。
 
-### 対象メッセージが取得できない場合
+### 対象が取得できない場合
 
-`update_slack_message` / `delete_slack_message` のプレビューは `conversations.history`（スレッド返信の場合は `conversations.replies`）で対象メッセージを取得しますが、`chat.update` / `chat.delete` 自体には履歴スコープが不要です。したがってスコープ不足などで対象を読めなくても操作はブロックされず、`current` / `target` を省略したうえで `current_note` / `target_note` に理由を入れて返します。**内容を確認しないまま実行することになる**というシグナルなので、承認前に必ず確認してください。
+`update_slack_message` / `delete_slack_message` のプレビューは、`conversations.info` でチャンネル名を、`conversations.history`（スレッド返信の場合は `conversations.replies`）で対象メッセージを取得します。しかし `chat.update` / `chat.delete` 自体は履歴スコープも `channels:read` / `groups:read` も必要としません。つまり「消せるが読めない」トークンが正当に存在します。
+
+そのためどちらの解決に失敗しても操作はブロックされず、解決できなかった項目を省略したうえで `current_note` / `target_note` に理由を入れて返します。
+
+| 状況 | 挙動 |
+| --- | --- |
+| メッセージを読めない（履歴スコープ不足など） | `current` / `target` を省略し、note に理由を記載 |
+| チャンネル名を解決できない（`channels:read` / `groups:read` 不足など） | `channel_name` を省略し、`channel_id`（省略時は `MCP_SLACK_CHANNEL_ID` の値）はそのまま返して note に理由を記載 |
+| `channel_id` 未指定かつ `MCP_SLACK_CHANNEL_ID` 未設定 | エラー（宛先が特定できず、操作対象が存在しない） |
+
+宛先の有無は設定から判定するため、`channel_id` を省略して `MCP_SLACK_CHANNEL_ID` に頼る場合も、`conversations.info` が失敗しても操作はブロックされません。
+
+note が入っている場合は**内容を確認しないまま実行することになる**というシグナルなので、承認前に必ず確認してください。ここでエラーにしてしまうと、そのメッセージを削除する手段がこのサーバーから一切失われるため、あえて降格して人間に判断を委ねています。
 
 対象の特定は ts の完全一致で行います。`conversations.history` はトップレベルのメッセージしか返さないため、スレッド返信の ts を渡すと Slack は「直近の古い親メッセージ」を返してきます。それを削除確認画面に出すと全く別のメッセージを見せることになるので、ts が一致しない場合は `conversations.replies` にフォールバックしてスレッド内を走査します。
 
@@ -101,7 +122,7 @@
 | --- | :---: | --- |
 | `types` | 任意 | 取得する会話種別。`public_channel`, `private_channel`, `mpim`, `im` を指定できます。省略時は Slack API のデフォルト `public_channel` です。 |
 | `exclude_archived` | 任意 | `true` の場合、アーカイブ済みチャンネルを除外します。 |
-| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。 |
+| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります（後述）。 |
 | `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
 | `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
 | `sort` | 任意 | 取得した結果に適用する返却前の並び順。`none`, `name_asc`, `name_desc`, `created_asc`, `created_desc` を指定できます。省略時は `name_asc` です。 |
@@ -116,12 +137,18 @@ Slack API の `conversations.list` には並び順を指定する引数がない
 | --- | :---: | --- |
 | `types` | 任意 | 取得する会話種別。`public_channel`, `private_channel`, `mpim`, `im` を指定できます。省略時は Slack API のデフォルト `public_channel` です。 |
 | `exclude_archived` | 任意 | `true` の場合、アーカイブ済みチャンネルを除外します。 |
-| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。 |
+| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります（後述）。 |
 | `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
 | `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
 | `sort` | 任意 | 取得した結果に適用する返却前の並び順。`none`, `name_asc`, `name_desc`, `created_asc`, `created_desc` を指定できます。省略時は `name_asc` です。 |
 
-`list_slack_channels` がワークスペース全体を返すのに対し、`list_joined_slack_channels` は `users.conversations` を使うため、サーバー側でトークン所有者のメンバーシップに絞り込まれた結果のみが返ります。`MCP_SLACK_USER_TOKEN`（ユーザートークン）を設定していればそのユーザー本人が参加しているチャンネル、ボットトークンのみの場合はそのボットが参加しているチャンネルが対象です。
+`list_slack_channels` がワークスペース全体を返すのに対し、`list_joined_slack_channels` は `users.conversations` を使うため、サーバー側でトークン所有者のメンバーシップに絞り込まれた結果のみが返ります。`MCP_SLACK_USER_TOKEN`（ユーザートークン）を設定していればそのユーザー本人が参加しているチャンネル、ボットトークンのみの場合はそのボットが参加しているチャンネルが対象です。入力フィールドは `list_slack_channels` と同一です。
+
+### `limit` と `next_cursor` の関係
+
+`limit` に達するまで Slack のページを順に辿り、`next_cursor` には続きから取得するためのカーソルを返します。このとき、Slackが1ページで返してきた項目は `limit` を超えても**すべて返します**（`limit` はページ単位の残数に丸めて要求するため、超過分はごく僅かです）。
+
+Slackのカーソルは「そのページ全体の後ろ」を指すため、ページの途中で打ち切って残りを捨てると、返した `next_cursor` でその捨てた項目を飛び越してしまい、以降どうページングしても取得できなくなります。`limit` を厳密に守るより取りこぼさないほうを優先しています。同じ理由で `list_slack_users` も同様に振る舞います。
 
 ## `get_slack_channel_info`
 
@@ -171,7 +198,7 @@ Slack API の `conversations.list` には並び順を指定する引数がない
 | フィールド | 必須 | 説明 |
 | --- | :---: | --- |
 | `query` | 任意 | `name` / `real_name` / `profile.display_name` / `email` に対する部分一致検索（大文字小文字を区別しません）。 |
-| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。 |
+| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります（後述）。 |
 | `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
 | `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
 | `include_deleted` | 任意 | `true` の場合、deactivate済み(deleted)ユーザーも含めます。省略時は除外されます。 |
@@ -192,6 +219,8 @@ Slack API の `conversations.list` には並び順を指定する引数がない
 
 `email` が指定されない場合、`name` はまず `users.list` から取得したユーザーの `name` / `real_name` / `display_name` との完全一致（大文字小文字を区別しない）を探します。完全一致が1件もない場合は部分一致にフォールバックします。一致が1件のときのみ `status: "found"` として `user` と `<@U...>` 形式の `mention` を返します。0件なら `status: "not_found"`、複数件なら `status: "ambiguous"` として `candidates` に候補一覧を返し、誤送信を避けるため自動選択はしません。
 
+`name` 検索は 5000 人までを走査して打ち切ります。打ち切りに達した場合は `search_truncated: true` が付きます。これは「ワークスペースにいない」と「探しきれなかった」を区別するためのフラグで、`true` のときの `not_found` は **走査した範囲にいなかった** という意味しかありません。より広く探す必要がある場合は `list_slack_users` に `query` を渡して自分でページングしてください。なお完全一致で1件に決まった場合は、走査を打ち切っていても `search_truncated` は付きません（未走査のメンバーがこれより良い一致になることはないため）。部分一致で1件だけ当たった場合は、打ち切られていれば `search_truncated: true` が付きます。
+
 ## `get_slack_auth_info`
 
 入力フィールドを取りません。設定されたトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`）が実際にどの Slack ワークスペース・ユーザー・Botとして認証されるかを、`team` / `user` / `bot_id` などで返します。他のツールと異なり OAuthスコープを一切必要としないため、「トークンは設定したのに他のツールがエラーになる」ときの切り分けに使えます。
@@ -201,10 +230,12 @@ Slack API の `conversations.list` には並び順を指定する引数がない
 | スコープ | 用途 |
 | --- | --- |
 | `chat:write` | `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message` |
-| `channels:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info`（`public_channel`） / `preview_slack_message_as_user` のチャンネル名解決 |
-| `groups:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info` で `private_channel` を含める場合（`preview_slack_message_as_user` がprivateチャンネル宛の場合も同様） |
-| `channels:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `preview_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で public channel を読む場合 |
-| `groups:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `preview_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で private channel を読む場合 |
-| `users:read` | `list_slack_users` / `resolve_slack_user`（name検索） / `preview_slack_message_as_user` の `mentions` 表示名解決 |
+| `channels:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info`（`public_channel`） / `post_slack_message_as_user` のチャンネル名解決 |
+| `groups:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info` で `private_channel` を含める場合（`post_slack_message_as_user` がprivateチャンネル宛の場合も同様） |
+| `channels:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で public channel を読む場合 |
+| `groups:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で private channel を読む場合 |
+| `users:read` | `list_slack_users` / `resolve_slack_user`（name検索） / `post_slack_message_as_user` の `mentions` 表示名解決 |
 | `users:read.email` | `lookup_slack_user_by_email` / `resolve_slack_user`（email検索） |
 | （不要） | `get_slack_auth_info` はOAuthスコープを問わずトークンの有効性のみ確認します |
+
+`update_slack_message` / `delete_slack_message` は `chat:write` のみでも動作します。読み取り系スコープは対象メッセージやチャンネル名をプレビューに出すためだけに使われ、無い場合はプレビューの該当項目が省略されるだけで操作自体はブロックされません（[対象が取得できない場合](#対象が取得できない場合)を参照）。

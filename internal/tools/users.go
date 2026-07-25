@@ -11,7 +11,7 @@ import (
 // ListSlackUsersInput is the input for list_slack_users.
 type ListSlackUsersInput struct {
 	Query          string `json:"query,omitempty" jsonschema:"name / real_name / display_name / email に対する部分一致検索クエリ（大文字小文字を区別しません）。"`
-	Limit          int    `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります。"`
 	Cursor         string `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
 	TeamID         string `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。"`
 	IncludeDeleted bool   `json:"include_deleted,omitempty" jsonschema:"trueの場合、deactivate済み(deleted)ユーザーも含めます。省略時は除外されます。"`
@@ -41,6 +41,8 @@ type ResolveSlackUserInput struct {
 // ResolveSlackUserOutput is the structured output for resolve_slack_user. Status is
 // one of "found", "ambiguous", or "not_found"; User/Mention are set only when
 // status is "found", and Candidates only when status is "ambiguous".
+// search_truncated warns that the name search did not cover the whole workspace, so a
+// "not_found" is "not among those searched" rather than "not in this workspace".
 type ResolveSlackUserOutput = client.ResolveUserResponse
 
 func (t *SlackTools) listSlackUsers(ctx context.Context, _ *mcp.CallToolRequest, in ListSlackUsersInput) (*mcp.CallToolResult, ListSlackUsersOutput, error) {
