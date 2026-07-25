@@ -14,15 +14,15 @@ MCP クライアントからコマンドとして起動され、stdin/stdout の
 
 特に断りがない限り、以下のツールは Web API 経由で動作し、`MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN`（未設定時は `MCP_SLACK_BOT_TOKEN`）を使用します。
 
-ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。トークンのみを設定した環境では Webhook 系の2ツール（`preview_slack_message` / `post_slack_message`）は一覧に現れず、その逆も同様です。
+ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。トークンのみを設定した環境では Webhook 系のツール（`post_slack_message`）は一覧に現れず、その逆も同様です。
+
+Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて `confirm` ゲートを持ちます。`confirm` を省略/falseにした場合は**Slackに一切触れず**、実際に送信される payload をプレビューとして返します。プレビュー専用の別ツールは意図的に用意していません（プレビューはツールを飛ばして到達できる別経路ではなく、既定の動作です）。
 
 | ツール名 | 説明 |
 | --- | --- |
-| `preview_slack_message` | `post_slack_message` で送信される Incoming Webhook payload を投稿せずに確認 |
 | `post_slack_message` | `confirm=true` の場合のみ `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿。`confirm` を省略/falseにした場合は投稿せずプレビューのみ返す |
-| `preview_slack_message_as_user` | `post_slack_message_as_user` で送信される `chat.postMessage` payload を投稿せずに確認 |
 | `post_slack_message_as_user` | `confirm=true` の場合のみ `chat.postMessage` で投稿し、`channel_id` と `ts` を返す。`confirm` を省略/falseにした場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返す |
-| `update_slack_message` | `confirm=true` の場合のみ `chat.update` で投稿済みメッセージの内容を更新。`confirm` を省略/falseにした場合は更新せず、更新前の内容と更新後の内容を並べたプレビューのみ返す |
+| `update_slack_message` | `confirm=true` の場合のみ `chat.update` で投稿済みメッセージの内容を更新。`confirm` を省略/falseにした場合は更新せず、更新前の内容と更新後の payload を並べたプレビューのみ返す |
 | `delete_slack_message` | `confirm=true` の場合のみ `chat.delete` で投稿済みメッセージを削除。`confirm` を省略/falseにした場合は削除せず、削除対象メッセージの内容をプレビューとして返す |
 | `list_slack_channels` | `conversations.list` でワークスペース全体のチャンネル一覧を取得 |
 | `list_joined_slack_channels` | `users.conversations` でトークン所有者が参加しているチャンネルのみを取得 |
@@ -44,7 +44,6 @@ ap-mcp-slack/
 └── internal/
     ├── config/          # 環境変数ロード
     ├── app/             # DI コンテナ（SlackClient・設定の集約）
-    ├── builder/         # コンテナから Server を組み立てる DI
     ├── client/          # Slack Incoming Webhook / Web API クライアント
     ├── tools/           # MCP ツール定義
     └── server/          # MCP stdio サーバー
@@ -117,7 +116,7 @@ go run .
 | `MCP_SLACK_TOKEN` | いずれか必須 | Slack Web API用の汎用トークン。`MCP_SLACK_USER_TOKEN` が未指定の場合に利用。 |
 | `MCP_SLACK_BOT_TOKEN` | いずれか必須 | Slack Web API用のBotトークン。上記2つが未指定の場合に利用。 |
 | `MCP_SLACK_CHANNEL_ID` | 任意 | Web API投稿・削除のデフォルトチャンネルID。ツール入力の `channel_id` で上書き可能。 |
-| `MCP_SLACK_SOURCE_LABEL` | 任意 | `preview_slack_message` / `post_slack_message` / `preview_slack_message_as_user` / `post_slack_message_as_user` の payload 末尾に付与する投稿元ラベル。Block Kitのcontextブロックとして自動付与されます。未設定時は `ap-mcp-slack (MCP) 経由`。 |
+| `MCP_SLACK_SOURCE_LABEL` | 任意 | `post_slack_message` / `post_slack_message_as_user` / `update_slack_message` の payload 末尾に付与する投稿元ラベル。Block Kitのcontextブロックとして自動付与されます。未設定時は `ap-mcp-slack (MCP) 経由`。 |
 
 `MCP_SLACK_WEBHOOK_URL` とトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN` のいずれか）は、少なくとも一方を設定してください。どちらも未設定の場合、登録できるツールが1つも無くなるため、サーバーは起動時にエラー終了します（正常に接続したうえでツールを何も広告しない、という分かりにくい状態を避けるためです）。
 

@@ -24,6 +24,11 @@ func NewSlackTools(c *client.SlackClient) *SlackTools {
 // process was given credentials for. Advertising a webhook tool to a token-only
 // deployment invites the model to choose it, build a payload, get a human to approve
 // the preview, and only then fail — so the tool is simply not offered.
+//
+// For the same reason there are no separate preview_* tools: every mutating tool
+// returns its preview when confirm is unset, so previewing is the default path through
+// the tool a model already picked, not a second tool it has to know to reach for
+// first. A distinct preview tool could only add a way to skip the gate.
 func (t *SlackTools) Register(server *mcp.Server) {
 	if t.client.WebhookConfigured() {
 		t.registerWebhookTools(server)
@@ -36,26 +41,16 @@ func (t *SlackTools) Register(server *mcp.Server) {
 // registerWebhookTools registers the tools backed by MCP_SLACK_WEBHOOK_URL.
 func (t *SlackTools) registerWebhookTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "preview_slack_message",
-		Description: "post_slack_message で送信される Slack Incoming Webhook payload を、Slackへ投稿せずに確認します。",
-	}, t.previewSlackMessage)
-
-	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message",
-		Description: "MCP_SLACK_WEBHOOK_URL の Slack Incoming Webhook にメッセージを投稿します。",
+		Description: "MCP_SLACK_WEBHOOK_URL の Slack Incoming Webhook にメッセージを投稿します。confirm=false（省略時）は投稿せず、送信される payload のプレビューのみを返します。",
 	}, t.postSlackMessage)
 }
 
 // registerWebAPITools registers the tools backed by a Slack Web API token.
 func (t *SlackTools) registerWebAPITools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "preview_slack_message_as_user",
-		Description: "post_slack_message_as_user で送信される Slack Web API chat.postMessage payload を、Slackへ投稿せずに確認します。",
-	}, t.previewSlackMessageAsUser)
-
-	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message_as_user",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.postMessage でメッセージを投稿します。成功時に channel_id と ts を返します。",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.postMessage でメッセージを投稿します。confirm=false（省略時）は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみを返します。投稿時は channel_id と ts を返します。",
 	}, t.postSlackMessageAsUser)
 
 	mcp.AddTool(server, &mcp.Tool{

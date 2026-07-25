@@ -28,7 +28,12 @@ type PostWebAPIMessageResponse struct {
 	TS        string `json:"ts,omitempty"`
 }
 
-// PreviewWebAPIMessage builds the chat.postMessage payload without sending it.
+// PreviewWebAPIMessage resolves and validates the chat.postMessage payload without
+// sending it: it fills in the default channel, appends the source-label footer, and
+// rejects blocks/attachments Slack could not parse.
+//
+// PostWebAPIMessage sends exactly what this returns, so the payload a human approves
+// in a preview is the payload that reaches Slack.
 func (w *webAPITransport) PreviewWebAPIMessage(msg WebAPIMessage) (WebAPIMessage, error) {
 	if strings.TrimSpace(msg.Text) == "" {
 		return WebAPIMessage{}, fmt.Errorf("slack: text is required")
@@ -37,11 +42,8 @@ func (w *webAPITransport) PreviewWebAPIMessage(msg WebAPIMessage) (WebAPIMessage
 	if msg.ChannelID == "" {
 		return WebAPIMessage{}, fmt.Errorf("slack: channel_id is required")
 	}
-	msg.Blocks = appendRawSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
-	if _, err := convertBlocks(msg.Blocks); err != nil {
-		return WebAPIMessage{}, err
-	}
-	if _, err := convertAttachments(msg.Attachments); err != nil {
+	msg.Blocks = appendSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
+	if _, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments); err != nil {
 		return WebAPIMessage{}, err
 	}
 	return msg, nil
@@ -54,20 +56,19 @@ type DeleteWebAPIMessageResponse struct {
 	TS        string `json:"ts,omitempty"`
 }
 
-// PostWebAPIMessage posts a message with Slack Web API chat.postMessage.
+// PostWebAPIMessage posts a message with Slack Web API chat.postMessage. It resolves
+// the payload through PreviewWebAPIMessage so the message sent is byte-for-byte the one
+// a preview of the same input would have shown.
 func (w *webAPITransport) PostWebAPIMessage(ctx context.Context, msg WebAPIMessage) (*PostWebAPIMessageResponse, error) {
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(msg.Text) == "" {
-		return nil, fmt.Errorf("slack: text is required")
-	}
-	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
-	if msg.ChannelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
+	msg, err := w.PreviewWebAPIMessage(msg)
+	if err != nil {
+		return nil, err
 	}
 
-	options, err := buildPostMessageOptions(msg, w.sourceLabel)
+	options, err := buildPostMessageOptions(msg)
 	if err != nil {
 		return nil, err
 	}
@@ -99,33 +100,53 @@ type UpdateWebAPIMessageResponse struct {
 	Text      string `json:"text,omitempty"`
 }
 
+// PreviewUpdateWebAPIMessage resolves and validates the chat.update payload without
+// sending it, the same way PreviewWebAPIMessage does for chat.postMessage: it fills in
+// the default channel, appends the source-label footer, and rejects unparseable
+// blocks/attachments.
+//
+// An update overwrites content irreversibly, so the caller is shown the resolved
+// replacement — footer and all — rather than just the raw text it passed in.
+func (w *webAPITransport) PreviewUpdateWebAPIMessage(msg UpdateWebAPIMessage) (UpdateWebAPIMessage, error) {
+	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
+	if msg.ChannelID == "" {
+		return UpdateWebAPIMessage{}, fmt.Errorf("slack: channel_id is required")
+	}
+	msg.TS = strings.TrimSpace(msg.TS)
+	if msg.TS == "" {
+		return UpdateWebAPIMessage{}, fmt.Errorf("slack: ts is required")
+	}
+	if strings.TrimSpace(msg.Text) == "" && len(msg.Blocks) == 0 && len(msg.Attachments) == 0 {
+		return UpdateWebAPIMessage{}, fmt.Errorf("slack: text, blocks, or attachments is required")
+	}
+	msg.Blocks = appendSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
+	if _, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments); err != nil {
+		return UpdateWebAPIMessage{}, err
+	}
+	return msg, nil
+}
+
 // UpdateWebAPIMessage replaces a message's content with Slack Web API chat.update.
 // Only the original poster (the same bot, for a bot token, or the same user, for a
 // user token) can update a message; Slack rejects the request otherwise. As with
 // PostWebAPIMessage, blocks/attachments fully replace the previous content rather
-// than merging with it.
+// than merging with it, and the payload is resolved through
+// PreviewUpdateWebAPIMessage so it matches what a preview would have shown.
 func (w *webAPITransport) UpdateWebAPIMessage(ctx context.Context, msg UpdateWebAPIMessage) (*UpdateWebAPIMessageResponse, error) {
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
-	msg.ChannelID = w.channelIDOrDefault(msg.ChannelID)
-	if msg.ChannelID == "" {
-		return nil, fmt.Errorf("slack: channel_id is required")
-	}
-	ts := strings.TrimSpace(msg.TS)
-	if ts == "" {
-		return nil, fmt.Errorf("slack: ts is required")
-	}
-	if strings.TrimSpace(msg.Text) == "" && len(msg.Blocks) == 0 && len(msg.Attachments) == 0 {
-		return nil, fmt.Errorf("slack: text, blocks, or attachments is required")
-	}
-
-	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments, w.sourceLabel)
+	msg, err := w.PreviewUpdateWebAPIMessage(msg)
 	if err != nil {
 		return nil, err
 	}
 
-	channelID, respTS, text, err := w.slackAPIClient.UpdateMessageContext(ctx, msg.ChannelID, ts, options...)
+	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments)
+	if err != nil {
+		return nil, err
+	}
+
+	channelID, respTS, text, err := w.slackAPIClient.UpdateMessageContext(ctx, msg.ChannelID, msg.TS, options...)
 	if err != nil {
 		return nil, fmt.Errorf("slack: chat.update failed: %w", err)
 	}
@@ -161,8 +182,8 @@ func (w *webAPITransport) DeleteWebAPIMessage(ctx context.Context, channelID str
 	}, nil
 }
 
-func buildPostMessageOptions(msg WebAPIMessage, sourceLabel string) ([]slackapi.MsgOption, error) {
-	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments, sourceLabel)
+func buildPostMessageOptions(msg WebAPIMessage) ([]slackapi.MsgOption, error) {
+	options, err := buildContentOptions(msg.Text, msg.Blocks, msg.Attachments)
 	if err != nil {
 		return nil, err
 	}
@@ -188,15 +209,20 @@ func buildPostMessageOptions(msg WebAPIMessage, sourceLabel string) ([]slackapi.
 }
 
 // buildContentOptions builds the text/blocks/attachments options shared by
-// chat.postMessage and chat.update, appending the source-label footer block.
-func buildContentOptions(text string, rawBlocks, rawAttachments []map[string]any, sourceLabel string) ([]slackapi.MsgOption, error) {
+// chat.postMessage and chat.update. The source-label footer is expected to be already
+// present in rawBlocks: the Preview* methods apply it, and both send paths route
+// through them, so it is applied in exactly one place.
+//
+// Doubling as the payload validator is deliberate — the Preview* methods call this and
+// discard the options, which guarantees a preview rejects precisely the payloads the
+// corresponding send would have rejected.
+func buildContentOptions(text string, rawBlocks, rawAttachments []map[string]any) ([]slackapi.MsgOption, error) {
 	options := []slackapi.MsgOption{slackapi.MsgOptionText(text, false)}
 
 	blocks, err := convertBlocks(rawBlocks)
 	if err != nil {
 		return nil, err
 	}
-	blocks = appendSourceLabelBlock(blocks, text, sourceLabel)
 	if len(blocks) > 0 {
 		options = append(options, slackapi.MsgOptionBlocks(blocks...))
 	}
@@ -210,31 +236,6 @@ func buildContentOptions(text string, rawBlocks, rawAttachments []map[string]any
 	}
 
 	return options, nil
-}
-
-// appendSourceLabelBlock appends a context block naming the message's source (e.g.
-// "ap-mcp-slack (MCP) 経由"). This exists because a user-token chat.postMessage call
-// posts under the human user's own name and avatar with no "APP" badge, so without
-// this footer there is no way to tell an MCP-originated post apart from one the user
-// typed by hand. If the caller supplied no blocks, msg.Text is first turned into a
-// section block so the visible body isn't replaced by just the footer: Slack renders
-// blocks (when present) in place of text, using text only as the fallback/notification
-// string.
-func appendSourceLabelBlock(blocks []slackapi.Block, text, sourceLabel string) []slackapi.Block {
-	sourceLabel = strings.TrimSpace(sourceLabel)
-	if sourceLabel == "" {
-		return blocks
-	}
-
-	if len(blocks) == 0 && strings.TrimSpace(text) != "" {
-		blocks = append(blocks, slackapi.NewSectionBlock(
-			slackapi.NewTextBlockObject(slackapi.MarkdownType, text, false, false), nil, nil,
-		))
-	}
-
-	return append(blocks, slackapi.NewContextBlock("",
-		slackapi.NewTextBlockObject(slackapi.MarkdownType, sourceLabel, false, false),
-	))
 }
 
 func convertBlocks(rawBlocks []map[string]any) ([]slackapi.Block, error) {

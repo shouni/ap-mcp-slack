@@ -12,9 +12,9 @@ import (
 // webhookTransport posts messages through Slack Incoming Webhooks.
 //
 // Response bodies are capped by go-http-kit itself at httpkit.MaxResponseBodySize
-// (25MB, unconditional, not caller-configurable in v1.6.0) rather than the tighter
-// 64KB this package enforced manually before adopting go-http-kit. A malicious or
-// misbehaving webhook endpoint can't force unbounded memory growth, only up to that
+// (25MB, unconditional, still not caller-configurable as of v1.7.0) rather than the
+// tighter 64KB this package enforced manually before adopting go-http-kit. A malicious
+// or misbehaving webhook endpoint can't force unbounded memory growth, only up to that
 // fixed ceiling; a real Slack incoming webhook only ever returns a few bytes.
 type webhookTransport struct {
 	webhookURL    string
@@ -72,15 +72,13 @@ func (w *webhookTransport) PreviewMessage(msg Message) (Message, error) {
 	if strings.TrimSpace(msg.Text) == "" {
 		return Message{}, fmt.Errorf("slack: text is required")
 	}
-	msg.Blocks = appendRawSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
+	msg.Blocks = appendSourceLabelBlock(msg.Blocks, msg.Text, w.sourceLabel)
 	return msg, nil
 }
 
-// PostMessage posts a message to Slack.
+// PostMessage posts a message to Slack. It resolves the payload through PreviewMessage
+// so what is delivered matches what a preview of the same input would have shown.
 func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostMessageResponse, error) {
-	if w.webhookURL == "" {
-		return nil, fmt.Errorf("slack: webhook URL is required")
-	}
 	msg, err := w.PreviewMessage(msg)
 	if err != nil {
 		return nil, err

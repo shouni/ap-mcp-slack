@@ -46,7 +46,7 @@ func TestListJoinedSlackChannels(t *testing.T) {
 
 	session := newTestSession(t, client.SlackClientConfig{Token: "xoxp-test", APIBaseURL: server.URL})
 
-	var out ListJoinedSlackChannelsOutput
+	var out ListSlackChannelsOutput
 	result := callTool(t, session, "list_joined_slack_channels", map[string]any{}, &out)
 	if result.IsError {
 		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)

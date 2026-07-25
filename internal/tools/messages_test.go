@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -12,7 +13,11 @@ import (
 	"ap-mcp-slack/internal/client"
 )
 
-func TestPreviewSlackMessage(t *testing.T) {
+// TestPostSlackMessageWithoutConfirmReturnsPreview pins the confirm gate on the
+// webhook path: an unconfirmed call must send nothing and still hand back the exact
+// payload a confirmed one would deliver, source-label footer included. There is no
+// separate preview tool, so this response is the only preview a caller ever sees.
+func TestPostSlackMessageWithoutConfirmReturnsPreview(t *testing.T) {
 	t.Parallel()
 
 	session := newTestSession(t, client.SlackClientConfig{
@@ -20,30 +25,30 @@ func TestPreviewSlackMessage(t *testing.T) {
 		SourceLabel: "ap-mcp-slack (MCP) 経由",
 	})
 
-	var out PreviewSlackMessageOutput
-	result := callTool(t, session, "preview_slack_message", map[string]any{
+	var out PostSlackMessageOutput
+	result := callTool(t, session, "post_slack_message", map[string]any{
 		"text": "*hello*",
 	}, &out)
 	if result.IsError {
 		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
 	}
-	if !out.OK || out.Transport != "webhook" || out.Payload.Text != "*hello*" {
-		t.Fatalf("out = %+v", out)
+	if !out.OK || out.Posted || out.Payload.Text != "*hello*" {
+		t.Fatalf("out = %+v, want a preview-only, unposted response", out)
 	}
 	if len(out.Payload.Blocks) != 2 {
 		t.Fatalf("Blocks = %+v, want section+context (source label)", out.Payload.Blocks)
 	}
 }
 
-func TestPreviewSlackMessageWithMentions(t *testing.T) {
+func TestPostSlackMessageMentionsArePrependedToText(t *testing.T) {
 	t.Parallel()
 
 	session := newTestSession(t, client.SlackClientConfig{
 		WebhookURL: "https://hooks.slack.com/services/T/B/X",
 	})
 
-	var out PreviewSlackMessageOutput
-	result := callTool(t, session, "preview_slack_message", map[string]any{
+	var out PostSlackMessageOutput
+	result := callTool(t, session, "post_slack_message", map[string]any{
 		"text":     "*hello*",
 		"mentions": []string{"U001", "U002"},
 	}, &out)
@@ -58,38 +63,23 @@ func TestPreviewSlackMessageWithMentions(t *testing.T) {
 	}
 }
 
-func TestPreviewSlackMessageRequiresText(t *testing.T) {
+func TestPostSlackMessageRequiresText(t *testing.T) {
 	t.Parallel()
 
 	session := newTestSession(t, client.SlackClientConfig{WebhookURL: "https://hooks.slack.com/services/T/B/X"})
 
-	result := callTool(t, session, "preview_slack_message", map[string]any{}, nil)
+	result := callTool(t, session, "post_slack_message", map[string]any{}, nil)
 	if !result.IsError {
 		t.Fatal("CallTool() IsError = false, want error for missing text")
 	}
 }
 
-func TestPostSlackMessageWithoutConfirmDoesNotPost(t *testing.T) {
+func TestPostSlackMessageRejectsMentionsWithBlocks(t *testing.T) {
 	t.Parallel()
 
 	session := newTestSession(t, client.SlackClientConfig{WebhookURL: "https://hooks.slack.com/services/T/B/X"})
 
-	var out PostSlackMessageOutput
-	result := callTool(t, session, "post_slack_message", map[string]any{"text": "hello"}, &out)
-	if result.IsError {
-		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
-	}
-	if out.Posted || out.Payload.Text != "hello" {
-		t.Fatalf("out = %+v, want a preview-only, unposted response", out)
-	}
-}
-
-func TestPreviewSlackMessageRejectsMentionsWithBlocks(t *testing.T) {
-	t.Parallel()
-
-	session := newTestSession(t, client.SlackClientConfig{WebhookURL: "https://hooks.slack.com/services/T/B/X"})
-
-	result := callTool(t, session, "preview_slack_message", map[string]any{
+	result := callTool(t, session, "post_slack_message", map[string]any{
 		"text":     "hello",
 		"mentions": []string{"U001"},
 		"blocks": []map[string]any{
@@ -101,37 +91,7 @@ func TestPreviewSlackMessageRejectsMentionsWithBlocks(t *testing.T) {
 	}
 }
 
-func TestPreviewSlackMessageAsUser(t *testing.T) {
-	t.Parallel()
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/conversations.info" {
-			t.Fatalf("path = %s, want /conversations.info", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C123","name":"general"}}`))
-	}))
-	defer server.Close()
-
-	session := newTestSession(t, client.SlackClientConfig{
-		Token:            "xoxp-test",
-		DefaultChannelID: "C123",
-		APIBaseURL:       server.URL,
-	})
-
-	var out PreviewSlackMessageAsUserOutput
-	result := callTool(t, session, "preview_slack_message_as_user", map[string]any{
-		"text": "*hello*",
-	}, &out)
-	if result.IsError {
-		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
-	}
-	if !out.OK || out.Transport != "web_api" || out.ChannelID != "C123" || out.ChannelName != "general" || out.Payload.Text != "*hello*" {
-		t.Fatalf("out = %+v", out)
-	}
-}
-
-func TestPreviewSlackMessageAsUserResolvesMentionsAndThreadParent(t *testing.T) {
+func TestPostSlackMessageAsUserPreviewResolvesMentionsAndThreadParent(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,8 +123,8 @@ func TestPreviewSlackMessageAsUserResolvesMentionsAndThreadParent(t *testing.T) 
 		APIBaseURL:       server.URL,
 	})
 
-	var out PreviewSlackMessageAsUserOutput
-	result := callTool(t, session, "preview_slack_message_as_user", map[string]any{
+	var out PostSlackMessageAsUserOutput
+	result := callTool(t, session, "post_slack_message_as_user", map[string]any{
 		"text":      "*hello*",
 		"mentions":  []string{"U001"},
 		"thread_ts": "1700000000.000100",
@@ -172,8 +132,8 @@ func TestPreviewSlackMessageAsUserResolvesMentionsAndThreadParent(t *testing.T) 
 	if result.IsError {
 		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
 	}
-	if out.ChannelName != "general" {
-		t.Fatalf("out.ChannelName = %q, want general", out.ChannelName)
+	if out.Posted || out.ChannelName != "general" {
+		t.Fatalf("out.Posted = %v, out.ChannelName = %q, want an unposted preview for #general", out.Posted, out.ChannelName)
 	}
 	if len(out.Mentions) != 1 || out.Mentions[0].ID != "U001" || out.Mentions[0].RealName != "Alice A" || out.Mentions[0].Mention != "<@U001>" {
 		t.Fatalf("out.Mentions = %+v", out.Mentions)
@@ -186,17 +146,21 @@ func TestPreviewSlackMessageAsUserResolvesMentionsAndThreadParent(t *testing.T) 
 	}
 }
 
-func TestPreviewSlackMessageAsUserRequiresChannel(t *testing.T) {
+func TestPostSlackMessageAsUserRequiresChannel(t *testing.T) {
 	t.Parallel()
 
 	session := newTestSession(t, client.SlackClientConfig{Token: "xoxp-test"})
 
-	result := callTool(t, session, "preview_slack_message_as_user", map[string]any{"text": "hello"}, nil)
+	result := callTool(t, session, "post_slack_message_as_user", map[string]any{"text": "hello"}, nil)
 	if !result.IsError {
 		t.Fatal("CallTool() IsError = false, want channel_id error")
 	}
 }
 
+// TestPostSlackMessageAsUserWithoutConfirmDoesNotPost pins the confirm gate on the Web
+// API path, including the source-label footer the preview must show: this response is
+// the only preview a caller gets, so anything missing from it is something a human
+// approves without seeing.
 func TestPostSlackMessageAsUserWithoutConfirmDoesNotPost(t *testing.T) {
 	t.Parallel()
 
@@ -216,6 +180,7 @@ func TestPostSlackMessageAsUserWithoutConfirmDoesNotPost(t *testing.T) {
 		Token:            "xoxp-test",
 		DefaultChannelID: "C123",
 		APIBaseURL:       server.URL,
+		SourceLabel:      "ap-mcp-slack (MCP) 経由",
 	})
 
 	var out PostSlackMessageAsUserOutput
@@ -225,8 +190,11 @@ func TestPostSlackMessageAsUserWithoutConfirmDoesNotPost(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
 	}
-	if out.Posted || out.ChannelName != "general" || out.TS != "" {
+	if !out.OK || out.Posted || out.ChannelID != "C123" || out.ChannelName != "general" || out.TS != "" {
 		t.Fatalf("out = %+v, want a preview-only, unposted response", out)
+	}
+	if out.Payload.Text != "*hello*" || len(out.Payload.Blocks) != 2 {
+		t.Fatalf("out.Payload = %+v, want the text plus section+context (source label)", out.Payload)
 	}
 }
 
@@ -350,6 +318,40 @@ func TestUpdateSlackMessage(t *testing.T) {
 	}
 }
 
+// TestUpdateSlackMessagePreviewShowsBlocksOnlyReplacement covers a blocks-only update:
+// text is empty, so the resolved payload is the only thing that can tell a human what
+// the message is about to be overwritten with. Reporting just text here would ask them
+// to approve an apparently blank replacement.
+func TestUpdateSlackMessagePreviewShowsBlocksOnlyReplacement(t *testing.T) {
+	t.Parallel()
+
+	const ts = "1700000000.000100"
+	session, writes := targetSession(t, ts)
+
+	var out UpdateSlackMessageOutput
+	result := callTool(t, session, "update_slack_message", map[string]any{
+		"ts": ts,
+		"blocks": []map[string]any{
+			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "new body"}},
+		},
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
+	}
+	if out.Updated || writes.Load() != 0 {
+		t.Fatalf("out.Updated = %v, chat.update calls = %d, want an unconfirmed no-op", out.Updated, writes.Load())
+	}
+	if out.Current == nil || out.Current.Text != "original body" {
+		t.Fatalf("out.Current = %+v, want the pre-update body", out.Current)
+	}
+	if len(out.Payload.Blocks) != 1 {
+		t.Fatalf("out.Payload.Blocks = %+v, want the replacement blocks", out.Payload.Blocks)
+	}
+	if got := out.Payload.Blocks[0]["type"]; got != "section" {
+		t.Fatalf("out.Payload.Blocks[0] = %+v, want the section block passed in", out.Payload.Blocks[0])
+	}
+}
+
 func TestUpdateSlackMessageAllowsAttachmentsOnly(t *testing.T) {
 	t.Parallel()
 
@@ -467,6 +469,77 @@ func TestDeleteSlackMessagePreviewReportsUnreadableTarget(t *testing.T) {
 	}
 	if out.Target != nil || out.TargetNote == "" {
 		t.Fatalf("out = %+v, want no target and an explanatory note", out)
+	}
+}
+
+// TestDeleteSlackMessageWithoutChannelReadScope covers a token that may delete but can
+// read neither the message nor its channel's name: chat.delete needs no read scope, so
+// the delete has to stay available, with both gaps called out. Failing the whole call
+// would leave the caller with a message they can delete through no tool here.
+func TestDeleteSlackMessageWithoutChannelReadScope(t *testing.T) {
+	t.Parallel()
+
+	var deletes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/chat.delete":
+			deletes.Add(1)
+			_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
+		default:
+			// conversations.info and conversations.history alike are out of scope.
+			_, _ = w.Write([]byte(`{"ok":false,"error":"missing_scope"}`))
+		}
+	}))
+	defer server.Close()
+
+	session := newTestSession(t, client.SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+
+	var out DeleteSlackMessageOutput
+	result := callTool(t, session, "delete_slack_message", map[string]any{
+		"channel_id": "C123",
+		"ts":         "1700000000.000100",
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, want a preview despite the unreadable channel, content = %+v", result.Content)
+	}
+	if out.Deleted || deletes.Load() != 0 {
+		t.Fatalf("out.Deleted = %v, chat.delete calls = %d, want an unconfirmed no-op", out.Deleted, deletes.Load())
+	}
+	if out.ChannelID != "C123" || out.ChannelName != "" {
+		t.Fatalf("out = %+v, want the raw channel_id and no resolved name", out)
+	}
+	if !strings.Contains(out.TargetNote, "チャンネル名") {
+		t.Fatalf("out.TargetNote = %q, want the unresolved-channel warning", out.TargetNote)
+	}
+
+	result = callTool(t, session, "delete_slack_message", map[string]any{
+		"channel_id": "C123",
+		"ts":         "1700000000.000100",
+		"confirm":    true,
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, want the delete to go through, content = %+v", result.Content)
+	}
+	if !out.Deleted || deletes.Load() != 1 {
+		t.Fatalf("out.Deleted = %v, chat.delete calls = %d, want 1 delete", out.Deleted, deletes.Load())
+	}
+}
+
+// TestDeleteSlackMessageRequiresResolvableChannel pins the one case that stays an
+// error: with no channel_id argument and no default channel there is no destination to
+// preview or delete from.
+func TestDeleteSlackMessageRequiresResolvableChannel(t *testing.T) {
+	t.Parallel()
+
+	session := newTestSession(t, client.SlackClientConfig{Token: "xoxp-test"})
+
+	result := callTool(t, session, "delete_slack_message", map[string]any{"ts": "1700000000.000100"}, nil)
+	if !result.IsError {
+		t.Fatal("CallTool() IsError = false, want channel_id error")
 	}
 }
 

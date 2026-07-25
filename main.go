@@ -1,4 +1,5 @@
-// ap-mcp-slack exposes Slack Incoming Webhook posting as an MCP stdio server.
+// ap-mcp-slack exposes Slack Incoming Webhook posting and Slack Web API messaging,
+// channel/message reads, and user lookups as an MCP stdio server.
 package main
 
 import (
@@ -9,8 +10,8 @@ import (
 	"syscall"
 
 	"ap-mcp-slack/internal/app"
-	"ap-mcp-slack/internal/builder"
 	"ap-mcp-slack/internal/config"
+	"ap-mcp-slack/internal/server"
 )
 
 func main() {
@@ -31,18 +32,7 @@ func run() error {
 		return err
 	}
 
-	container, err := app.NewContainer(cfg)
-	if err != nil {
-		slog.Error("コンテナの初期化に失敗しました", "error", err)
-		return err
-	}
-
-	srv, err := builder.BuildServer(container)
-	if err != nil {
-		slog.Error("MCPサーバーの構築に失敗しました", "error", err)
-		return err
-	}
-
+	srv := server.New(app.NewContainer(cfg))
 	if err := srv.Run(ctx); err != nil {
 		slog.Error("サーバーが異常終了しました", "error", err)
 		return err

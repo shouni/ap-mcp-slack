@@ -24,7 +24,8 @@ const (
 	ChannelSortCreatedDesc = "created_desc"
 )
 
-// ListChannelsOptions configures Slack conversations.list requests.
+// ListChannelsOptions configures Slack conversations.list and users.conversations
+// requests, which take the same set of parameters.
 type ListChannelsOptions struct {
 	Types           []string `json:"types,omitempty"`
 	ExcludeArchived bool     `json:"exclude_archived,omitempty"`
@@ -63,16 +64,6 @@ type ListChannelsResponse struct {
 	Count      int                   `json:"count"`
 	NextCursor string                `json:"next_cursor,omitempty"`
 	Sort       string                `json:"sort"`
-}
-
-// ListJoinedChannelsOptions configures Slack users.conversations requests.
-type ListJoinedChannelsOptions struct {
-	Types           []string `json:"types,omitempty"`
-	ExcludeArchived bool     `json:"exclude_archived,omitempty"`
-	Limit           int      `json:"limit,omitempty"`
-	Cursor          string   `json:"cursor,omitempty"`
-	TeamID          string   `json:"team_id,omitempty"`
-	Sort            string   `json:"sort,omitempty"`
 }
 
 // GetChannelInfoOptions configures Slack conversations.info requests.
@@ -115,30 +106,16 @@ func (w *webAPITransport) GetChannelInfo(ctx context.Context, opts GetChannelInf
 	}, nil
 }
 
-// channelPageFetcher fetches one page of channels at cursor, requesting at most
-// requestLimit items, returning the page and Slack's cursor for the next one.
-type channelPageFetcher func(ctx context.Context, cursor string, requestLimit int) (channels []slackapi.Channel, nextCursor string, err error)
-
 // ListChannels lists Slack channel-like conversations through conversations.list.
 func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOptions) (*ListChannelsResponse, error) {
-	if err := w.requireToken(); err != nil {
-		return nil, err
-	}
-
-	limit, types, sortBy, err := normalizeChannelListParams(opts.Limit, opts.Types, opts.Sort)
-	if err != nil {
-		return nil, err
-	}
-	teamID := strings.TrimSpace(opts.TeamID)
-
-	return w.collectChannelPages(ctx, "conversations.list", limit, strings.TrimSpace(opts.Cursor), sortBy,
-		func(ctx context.Context, cursor string, requestLimit int) ([]slackapi.Channel, string, error) {
+	return w.listChannels(ctx, "conversations.list", opts,
+		func(ctx context.Context, params channelPageParams) ([]slackapi.Channel, string, error) {
 			return w.slackAPIClient.GetConversationsContext(ctx, &slackapi.GetConversationsParameters{
-				Cursor:          cursor,
-				ExcludeArchived: opts.ExcludeArchived,
-				Limit:           requestLimit,
-				Types:           types,
-				TeamID:          teamID,
+				Cursor:          params.Cursor,
+				ExcludeArchived: params.ExcludeArchived,
+				Limit:           params.Limit,
+				Types:           params.Types,
+				TeamID:          params.TeamID,
 			})
 		})
 }
@@ -148,89 +125,77 @@ func (w *webAPITransport) ListChannels(ctx context.Context, opts ListChannelsOpt
 // Unlike ListChannels/conversations.list, this is scoped server-side to the caller's
 // own memberships rather than the whole workspace, so every returned channel already
 // has IsMember set.
-func (w *webAPITransport) ListJoinedChannels(ctx context.Context, opts ListJoinedChannelsOptions) (*ListChannelsResponse, error) {
+func (w *webAPITransport) ListJoinedChannels(ctx context.Context, opts ListChannelsOptions) (*ListChannelsResponse, error) {
+	return w.listChannels(ctx, "users.conversations", opts,
+		func(ctx context.Context, params channelPageParams) ([]slackapi.Channel, string, error) {
+			return w.slackAPIClient.GetConversationsForUserContext(ctx, &slackapi.GetConversationsForUserParameters{
+				Cursor:          params.Cursor,
+				ExcludeArchived: params.ExcludeArchived,
+				Limit:           params.Limit,
+				Types:           params.Types,
+				TeamID:          params.TeamID,
+			})
+		})
+}
+
+// channelPageParams holds the normalized per-page request parameters shared by
+// conversations.list and users.conversations.
+type channelPageParams struct {
+	Cursor          string
+	Limit           int
+	Types           []string
+	TeamID          string
+	ExcludeArchived bool
+}
+
+// listChannels validates opts, pages through fetch, then sorts and summarizes the
+// result. conversations.list and users.conversations take identical parameters and
+// return identical shapes, so they differ only in the fetch closure.
+func (w *webAPITransport) listChannels(ctx context.Context, apiMethod string, opts ListChannelsOptions, fetch func(context.Context, channelPageParams) ([]slackapi.Channel, string, error)) (*ListChannelsResponse, error) {
 	if err := w.requireToken(); err != nil {
 		return nil, err
 	}
 
-	limit, types, sortBy, err := normalizeChannelListParams(opts.Limit, opts.Types, opts.Sort)
+	limit, err := normalizeListLimit(opts.Limit, defaultChannelListLimit, maxChannelListLimit)
+	if err != nil {
+		return nil, err
+	}
+	types, err := normalizeChannelTypes(opts.Types)
+	if err != nil {
+		return nil, err
+	}
+	sortBy, err := normalizeChannelSort(opts.Sort)
 	if err != nil {
 		return nil, err
 	}
 	teamID := strings.TrimSpace(opts.TeamID)
 
-	return w.collectChannelPages(ctx, "users.conversations", limit, strings.TrimSpace(opts.Cursor), sortBy,
-		func(ctx context.Context, cursor string, requestLimit int) ([]slackapi.Channel, string, error) {
-			return w.slackAPIClient.GetConversationsForUserContext(ctx, &slackapi.GetConversationsForUserParameters{
+	channels, nextCursor, err := collectPages(ctx, apiMethod, limit, channelListPageSize, strings.TrimSpace(opts.Cursor),
+		func(ctx context.Context, cursor string, requestLimit int) ([]SlackChannelSummary, string, error) {
+			apiChannels, pageCursor, err := fetch(ctx, channelPageParams{
 				Cursor:          cursor,
-				ExcludeArchived: opts.ExcludeArchived,
 				Limit:           requestLimit,
 				Types:           types,
 				TeamID:          teamID,
+				ExcludeArchived: opts.ExcludeArchived,
 			})
-		})
-}
-
-// normalizeChannelListParams validates and applies defaults to the limit/types/sort
-// options shared by ListChannels and ListJoinedChannels.
-func normalizeChannelListParams(rawLimit int, rawTypes []string, rawSort string) (int, []string, string, error) {
-	limit, err := normalizeListLimit(rawLimit, defaultChannelListLimit, maxChannelListLimit)
+			if err != nil {
+				return nil, "", err
+			}
+			return summarizeChannels(apiChannels), pageCursor, nil
+		}, nil)
 	if err != nil {
-		return 0, nil, "", err
-	}
-	types, err := normalizeChannelTypes(rawTypes)
-	if err != nil {
-		return 0, nil, "", err
-	}
-	sortBy, err := normalizeChannelSort(rawSort)
-	if err != nil {
-		return 0, nil, "", err
-	}
-	return limit, types, sortBy, nil
-}
-
-// collectChannelPages pages through fetch, starting at cursor, until limit channels
-// have been collected or Slack has no more pages, then sorts and summarizes them.
-// Slack's pagination guide notes a page may return more items than requested, so a
-// page's items are all kept even if that pushes the total past limit: dropping the
-// overshoot would permanently lose it, since the next call resumes after nextCursor
-// regardless of what this method chose to do with the current page.
-func (w *webAPITransport) collectChannelPages(ctx context.Context, apiMethod string, limit int, cursor string, sortBy string, fetch channelPageFetcher) (*ListChannelsResponse, error) {
-	channels := make([]SlackChannelSummary, 0, limit)
-	seenCursors := map[string]struct{}{}
-
-	for len(channels) < limit {
-		requestLimit := min(channelListPageSize, limit-len(channels))
-		apiChannels, nextCursor, err := fetch(ctx, cursor, requestLimit)
-		if err != nil {
-			return nil, fmt.Errorf("slack: %s failed: %w", apiMethod, err)
-		}
-
-		for _, channel := range apiChannels {
-			channels = append(channels, summarizeChannel(channel))
-		}
-
-		nextCursor = strings.TrimSpace(nextCursor)
-		if nextCursor == "" {
-			cursor = ""
-			break
-		}
-		if _, ok := seenCursors[nextCursor]; ok {
-			return nil, fmt.Errorf("slack: %s returned duplicate cursor %q", apiMethod, nextCursor)
-		}
-		seenCursors[nextCursor] = struct{}{}
-		cursor = nextCursor
+		return nil, err
 	}
 
 	sortChannels(channels, sortBy)
-	names := channelNames(channels)
 
 	return &ListChannelsResponse{
 		OK:         true,
 		Channels:   channels,
-		Names:      names,
+		Names:      channelNames(channels),
 		Count:      len(channels),
-		NextCursor: cursor,
+		NextCursor: nextCursor,
 		Sort:       sortBy,
 	}, nil
 }
@@ -281,6 +246,14 @@ func normalizeChannelSort(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("slack: unsupported sort %q", raw)
 	}
+}
+
+func summarizeChannels(channels []slackapi.Channel) []SlackChannelSummary {
+	out := make([]SlackChannelSummary, 0, len(channels))
+	for _, channel := range channels {
+		out = append(out, summarizeChannel(channel))
+	}
+	return out
 }
 
 func summarizeChannel(channel slackapi.Channel) SlackChannelSummary {

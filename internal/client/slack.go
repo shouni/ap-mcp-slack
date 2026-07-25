@@ -2,6 +2,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -9,11 +10,12 @@ import (
 
 const requestTimeout = 10 * time.Second
 
-// SlackClient posts and deletes Slack messages through incoming webhooks and Web API.
-// It composes a webhook transport (Message/PostMessage) and a token-authenticated Web
-// API transport (WebAPIMessage/PostWebAPIMessage/DeleteWebAPIMessage/ListChannels).
-// The two share no state, so they're kept as separate embedded types rather than one
-// struct with fields that are only meaningful to one side or the other.
+// SlackClient exposes Slack messaging and workspace lookups over two independent
+// transports: a webhook transport (Incoming Webhook posting, webhook.go) and a
+// token-authenticated Web API transport (message post/update/delete, channel and
+// message reads, user lookups, auth.test — webapi*.go, users.go, auth.go). The two
+// share no state, so they're kept as separate embedded types rather than one struct
+// with fields that are only meaningful to one side or the other.
 type SlackClient struct {
 	webhookTransport
 	webAPITransport
@@ -54,9 +56,67 @@ func normalizeListLimit(limit, defaultLimit, maxLimit int) (int, error) {
 	return limit, nil
 }
 
-// appendRawSourceLabelBlock appends a Block Kit context footer carrying sourceLabel,
-// shared by both the webhook and Web API message payload builders.
-func appendRawSourceLabelBlock(blocks []map[string]any, text, sourceLabel string) []map[string]any {
+// pageFetcher fetches one page of already-summarized items at cursor, requesting at
+// most requestLimit of them, and returns the page along with Slack's cursor for the
+// next one ("" once the listing is exhausted).
+type pageFetcher[T any] func(ctx context.Context, cursor string, requestLimit int) (items []T, nextCursor string, err error)
+
+// collectPages pages through fetch, starting at cursor, until limit items that keep
+// accepts have been collected or Slack has no more pages. It returns the collected
+// items and the cursor to resume from (empty once exhausted). A nil keep accepts
+// everything. It backs every paginated listing here (channels, joined channels,
+// users), which differ only in the API they call and how they filter.
+//
+// Every item a page yields is kept, even when that pushes the total past limit.
+// Slack's cursor resumes *after* the whole page no matter how many of the page's items
+// the caller kept, so discarding the overshoot would lose those items permanently:
+// the next call with the returned cursor would skip straight past them. requestLimit
+// is narrowed to the outstanding shortfall on each page to keep the overshoot small,
+// but Slack's pagination guide allows a page to exceed what was asked for.
+func collectPages[T any](ctx context.Context, apiMethod string, limit, pageSize int, cursor string, fetch pageFetcher[T], keep func(T) bool) ([]T, string, error) {
+	items := make([]T, 0, min(limit, pageSize))
+	seenCursors := map[string]struct{}{}
+
+	for len(items) < limit {
+		page, nextCursor, err := fetch(ctx, cursor, min(pageSize, limit-len(items)))
+		if err != nil {
+			return nil, "", fmt.Errorf("slack: %s failed: %w", apiMethod, err)
+		}
+
+		for _, item := range page {
+			if keep == nil || keep(item) {
+				items = append(items, item)
+			}
+		}
+
+		nextCursor = strings.TrimSpace(nextCursor)
+		if nextCursor == "" {
+			return items, "", nil
+		}
+		if _, ok := seenCursors[nextCursor]; ok {
+			return nil, "", fmt.Errorf("slack: %s returned duplicate cursor %q", apiMethod, nextCursor)
+		}
+		seenCursors[nextCursor] = struct{}{}
+		cursor = nextCursor
+	}
+
+	return items, cursor, nil
+}
+
+// appendSourceLabelBlock appends a Block Kit context footer naming the message's
+// source (e.g. "ap-mcp-slack (MCP) 経由"). This exists because a user-token
+// chat.postMessage call posts under the human user's own name and avatar with no "APP"
+// badge, so without this footer there is no way to tell an MCP-originated post apart
+// from one the user typed by hand.
+//
+// If the caller supplied no blocks, text is first turned into a section block so the
+// visible body isn't replaced by just the footer: Slack renders blocks (when present)
+// in place of text, using text only as the fallback/notification string.
+//
+// This is the single place the footer is applied, for both transports. The payload a
+// preview shows a human is the payload that gets sent, so a second implementation on
+// the send path could only ever drift away from the one the human approved.
+func appendSourceLabelBlock(blocks []map[string]any, text, sourceLabel string) []map[string]any {
 	sourceLabel = strings.TrimSpace(sourceLabel)
 	if sourceLabel == "" {
 		return blocks
