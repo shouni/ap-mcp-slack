@@ -1,9 +1,13 @@
 package tools
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"ap-mcp-slack/internal/client"
 )
@@ -80,14 +84,20 @@ func TestPostSlackMessageWithoutConfirmDoesNotPost(t *testing.T) {
 	}
 }
 
-func TestPostSlackMessageRequiresWebhookURL(t *testing.T) {
+func TestPreviewSlackMessageRejectsMentionsWithBlocks(t *testing.T) {
 	t.Parallel()
 
-	session := newTestSession(t, client.SlackClientConfig{})
+	session := newTestSession(t, client.SlackClientConfig{WebhookURL: "https://hooks.slack.com/services/T/B/X"})
 
-	result := callTool(t, session, "post_slack_message", map[string]any{"text": "hello", "confirm": true}, nil)
+	result := callTool(t, session, "preview_slack_message", map[string]any{
+		"text":     "hello",
+		"mentions": []string{"U001"},
+		"blocks": []map[string]any{
+			{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": "hello"}},
+		},
+	}, nil)
 	if !result.IsError {
-		t.Fatal("CallTool() IsError = false, want webhook URL error")
+		t.Fatal("CallTool() IsError = false, want mentions+blocks rejection")
 	}
 }
 
@@ -255,60 +265,109 @@ func TestPostSlackMessageAsUser(t *testing.T) {
 	}
 }
 
-func TestUpdateSlackMessage(t *testing.T) {
-	t.Parallel()
+// targetSession starts a Slack API stub that can resolve a channel and the message at
+// targetTS, and returns a session against it plus a counter of the write calls
+// (chat.update / chat.delete) it received, so tests can assert that an unconfirmed
+// call performed no write at all.
+func targetSession(t *testing.T, targetTS string) (*mcp.ClientSession, *atomic.Int32) {
+	t.Helper()
 
+	var writes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat.update" {
-			t.Fatalf("path = %s, want /chat.update", r.URL.Path)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100","text":"*updated*"}`))
+		switch r.URL.Path {
+		case "/conversations.info":
+			_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C123","name":"general"}}`))
+		case "/conversations.history":
+			_, _ = w.Write(fmt.Appendf(nil,
+				`{"ok":true,"messages":[{"type":"message","user":"U001","text":"original body","ts":%q}],"has_more":false}`,
+				targetTS))
+		case "/chat.update":
+			writes.Add(1)
+			_, _ = w.Write(fmt.Appendf(nil, `{"ok":true,"channel":"C123","ts":%q,"text":"*updated*"}`, targetTS))
+		case "/chat.delete":
+			writes.Add(1)
+			_, _ = w.Write(fmt.Appendf(nil, `{"ok":true,"channel":"C123","ts":%q}`, targetTS))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			_, _ = w.Write([]byte(`{"ok":false,"error":"unexpected"}`))
+		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	session := newTestSession(t, client.SlackClientConfig{
+	return newTestSession(t, client.SlackClientConfig{
 		Token:            "xoxp-test",
 		DefaultChannelID: "C123",
 		APIBaseURL:       server.URL,
-	})
+	}), &writes
+}
+
+func TestUpdateSlackMessageWithoutConfirmDoesNotUpdate(t *testing.T) {
+	t.Parallel()
+
+	const ts = "1700000000.000100"
+	session, writes := targetSession(t, ts)
 
 	var out UpdateSlackMessageOutput
 	result := callTool(t, session, "update_slack_message", map[string]any{
-		"ts":   "1700000000.000100",
+		"ts":   ts,
 		"text": "*updated*",
 	}, &out)
 	if result.IsError {
 		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
 	}
-	if !out.OK || out.ChannelID != "C123" || out.TS != "1700000000.000100" || out.Text != "*updated*" {
+	if out.Updated || writes.Load() != 0 {
+		t.Fatalf("out.Updated = %v, chat.update calls = %d, want an unconfirmed no-op", out.Updated, writes.Load())
+	}
+	if out.Current == nil || out.Current.Text != "original body" {
+		t.Fatalf("out.Current = %+v, want the pre-update body", out.Current)
+	}
+	if out.ChannelName != "general" || out.Text != "*updated*" {
+		t.Fatalf("out = %+v, want the resolved channel and the proposed new text", out)
+	}
+}
+
+func TestUpdateSlackMessage(t *testing.T) {
+	t.Parallel()
+
+	const ts = "1700000000.000100"
+	session, writes := targetSession(t, ts)
+
+	var out UpdateSlackMessageOutput
+	result := callTool(t, session, "update_slack_message", map[string]any{
+		"ts":      ts,
+		"text":    "*updated*",
+		"confirm": true,
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
+	}
+	if !out.OK || !out.Updated || out.ChannelID != "C123" || out.TS != ts || out.Text != "*updated*" {
 		t.Fatalf("out = %+v", out)
+	}
+	if writes.Load() != 1 {
+		t.Fatalf("chat.update calls = %d, want 1", writes.Load())
 	}
 }
 
 func TestUpdateSlackMessageAllowsAttachmentsOnly(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
-	}))
-	defer server.Close()
-
-	session := newTestSession(t, client.SlackClientConfig{
-		Token:            "xoxp-test",
-		DefaultChannelID: "C123",
-		APIBaseURL:       server.URL,
-	})
+	const ts = "1700000000.000100"
+	session, writes := targetSession(t, ts)
 
 	result := callTool(t, session, "update_slack_message", map[string]any{
-		"ts": "1700000000.000100",
+		"ts":      ts,
+		"confirm": true,
 		"attachments": []map[string]any{
 			{"fallback": "fallback text", "text": "attachment text"},
 		},
 	}, nil)
 	if result.IsError {
 		t.Fatalf("CallTool() IsError = true, want attachments-only update to succeed, content = %+v", result.Content)
+	}
+	if writes.Load() != 1 {
+		t.Fatalf("chat.update calls = %d, want 1", writes.Load())
 	}
 }
 
@@ -323,15 +382,75 @@ func TestUpdateSlackMessageRequiresTS(t *testing.T) {
 	}
 }
 
+func TestUpdateSlackMessageRequiresContent(t *testing.T) {
+	t.Parallel()
+
+	session := newTestSession(t, client.SlackClientConfig{Token: "xoxp-test", DefaultChannelID: "C123"})
+
+	result := callTool(t, session, "update_slack_message", map[string]any{"ts": "1700000000.000100"}, nil)
+	if !result.IsError {
+		t.Fatal("CallTool() IsError = false, want text/blocks/attachments required error")
+	}
+}
+
+func TestDeleteSlackMessageWithoutConfirmDoesNotDelete(t *testing.T) {
+	t.Parallel()
+
+	const ts = "1700000000.000100"
+	session, writes := targetSession(t, ts)
+
+	var out DeleteSlackMessageOutput
+	result := callTool(t, session, "delete_slack_message", map[string]any{"ts": ts}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
+	}
+	if out.Deleted || writes.Load() != 0 {
+		t.Fatalf("out.Deleted = %v, chat.delete calls = %d, want an unconfirmed no-op", out.Deleted, writes.Load())
+	}
+	if out.Target == nil || out.Target.Text != "original body" {
+		t.Fatalf("out.Target = %+v, want the message that would be deleted", out.Target)
+	}
+	if out.ChannelName != "general" {
+		t.Fatalf("out.ChannelName = %q, want general", out.ChannelName)
+	}
+}
+
 func TestDeleteSlackMessage(t *testing.T) {
 	t.Parallel()
 
+	const ts = "1700000000.000100"
+	session, writes := targetSession(t, ts)
+
+	var out DeleteSlackMessageOutput
+	result := callTool(t, session, "delete_slack_message", map[string]any{
+		"ts":      ts,
+		"confirm": true,
+	}, &out)
+	if result.IsError {
+		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
+	}
+	if !out.OK || !out.Deleted || out.ChannelID != "C123" || out.TS != ts {
+		t.Fatalf("out = %+v", out)
+	}
+	if writes.Load() != 1 {
+		t.Fatalf("chat.delete calls = %d, want 1", writes.Load())
+	}
+}
+
+// TestDeleteSlackMessagePreviewReportsUnreadableTarget covers the token that may
+// delete but not read history: the delete must stay available, with the missing old
+// content called out rather than silently rendered as an empty message.
+func TestDeleteSlackMessagePreviewReportsUnreadableTarget(t *testing.T) {
+	t.Parallel()
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat.delete" {
-			t.Fatalf("path = %s, want /chat.delete", r.URL.Path)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"channel":"C123","ts":"1700000000.000100"}`))
+		switch r.URL.Path {
+		case "/conversations.info":
+			_, _ = w.Write([]byte(`{"ok":true,"channel":{"id":"C123","name":"general"}}`))
+		default:
+			_, _ = w.Write([]byte(`{"ok":false,"error":"missing_scope"}`))
+		}
 	}))
 	defer server.Close()
 
@@ -342,14 +461,12 @@ func TestDeleteSlackMessage(t *testing.T) {
 	})
 
 	var out DeleteSlackMessageOutput
-	result := callTool(t, session, "delete_slack_message", map[string]any{
-		"ts": "1700000000.000100",
-	}, &out)
+	result := callTool(t, session, "delete_slack_message", map[string]any{"ts": "1700000000.000100"}, &out)
 	if result.IsError {
-		t.Fatalf("CallTool() IsError = true, content = %+v", result.Content)
+		t.Fatalf("CallTool() IsError = true, want a preview despite the unreadable target, content = %+v", result.Content)
 	}
-	if !out.OK || out.ChannelID != "C123" || out.TS != "1700000000.000100" {
-		t.Fatalf("out = %+v", out)
+	if out.Target != nil || out.TargetNote == "" {
+		t.Fatalf("out = %+v, want no target and an explanatory note", out)
 	}
 }
 

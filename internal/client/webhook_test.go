@@ -119,10 +119,45 @@ func TestPostMessageAppendsSourceLabelBlock(t *testing.T) {
 	}
 }
 
-func TestPreviewMessageBuildsPayloadWithoutWebhookURL(t *testing.T) {
+// TestPreviewMessageRequiresWebhookURL guards the confirm-gated post flow: a preview
+// is what a human approves before anything is sent, so a payload that could never be
+// delivered must fail while it is still being built, not after sign-off.
+func TestPreviewMessageRequiresWebhookURL(t *testing.T) {
+	t.Parallel()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{SourceLabel: "ap-mcp-slack (MCP) 経由"})
+	if _, err := client.PreviewMessage(Message{Text: "hello"}); err == nil {
+		t.Fatal("PreviewMessage() error = nil, want webhook URL error")
+	}
+}
+
+func TestWebhookConfigured(t *testing.T) {
+	t.Parallel()
+
+	if NewSlackClientWithConfig(SlackClientConfig{}).WebhookConfigured() {
+		t.Fatal("WebhookConfigured() = true for empty config, want false")
+	}
+	if !NewSlackClientWithConfig(SlackClientConfig{WebhookURL: "http://example.test"}).WebhookConfigured() {
+		t.Fatal("WebhookConfigured() = false with a webhook URL, want true")
+	}
+}
+
+func TestWebAPIConfigured(t *testing.T) {
+	t.Parallel()
+
+	if NewSlackClientWithConfig(SlackClientConfig{}).WebAPIConfigured() {
+		t.Fatal("WebAPIConfigured() = true for empty config, want false")
+	}
+	if !NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"}).WebAPIConfigured() {
+		t.Fatal("WebAPIConfigured() = false with a token, want true")
+	}
+}
+
+func TestPreviewMessageBuildsPayloadWithoutSending(t *testing.T) {
 	t.Parallel()
 
 	client := NewSlackClientWithConfig(SlackClientConfig{
+		WebhookURL:  "https://hooks.slack.com/services/T/B/X",
 		SourceLabel: "ap-mcp-slack (MCP) 経由",
 	})
 	payload, err := client.PreviewMessage(Message{Text: "*hello* <@shouni>"})
@@ -143,7 +178,7 @@ func TestPreviewMessageBuildsPayloadWithoutWebhookURL(t *testing.T) {
 func TestPostMessageRequiresText(t *testing.T) {
 	t.Parallel()
 
-	client := NewSlackClient("http://example.test")
+	client := NewSlackClientWithConfig(SlackClientConfig{WebhookURL: "http://example.test"})
 	if _, err := client.PostMessage(context.Background(), Message{Text: "  "}); err == nil {
 		t.Fatal("PostMessage() error = nil, want error")
 	}

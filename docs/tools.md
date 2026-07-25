@@ -2,6 +2,19 @@
 
 `ap-mcp-slack` が提供する各 MCP ツールの入力フィールド・OAuthスコープの詳細です。ツール一覧・導入手順・ビルド方法は [README.md](../README.md) を参照してください。
 
+## ツールの登録条件
+
+ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。
+
+| 設定 | 登録されるツール |
+| --- | --- |
+| `MCP_SLACK_WEBHOOK_URL` のみ | `preview_slack_message` / `post_slack_message` |
+| トークンのみ（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`） | Web API 系の全ツール |
+| 両方 | すべて |
+| どちらも未設定 | 起動時にエラー終了します |
+
+これは、MCPクライアント側のモデルが「広告されているツール一覧」から選択するためです。認証情報のないトランスポートのツールを一覧に載せると、モデルがそれを選び、payloadを組み立て、人間にプレビューを承認させたうえで送信時に初めて失敗する、という最悪の順序になります。使えないツールは最初から見せません。
+
 ## `preview_slack_message` / `post_slack_message`
 
 | フィールド | 必須 | 説明 |
@@ -13,7 +26,7 @@
 | `icon_emoji` | 任意 | 投稿者アイコンとして使うSlack絵文字名。例: `:robot_face:` |
 | `unfurl_links` | 任意 | リンク展開の制御。 |
 | `unfurl_media` | 任意 | メディア展開の制御。 |
-| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` を指定した場合、本文はフォールバック表示にしか使われないため、`blocks` 内で明示的にメンションしてください。 |
+| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。 |
 | `confirm` | 任意（`post_slack_message` のみ） | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、プレビューのみ返します。 |
 
 ## `preview_slack_message_as_user` / `post_slack_message_as_user`
@@ -28,7 +41,7 @@
 | `icon_emoji` | 任意 | 投稿者アイコンとして使うSlack絵文字名。例: `:robot_face:` |
 | `unfurl_links` | 任意 | リンク展開の制御。 |
 | `unfurl_media` | 任意 | メディア展開の制御。 |
-| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`preview_slack_message_as_user` / `post_slack_message_as_user`（`confirm`未指定時）ではさらに `users.info` で表示名解決した結果を `mentions` フィールド（`id`/`real_name`/`display_name`/`mention` など）として返します。 |
+| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。`preview_slack_message_as_user` / `post_slack_message_as_user`（`confirm`未指定時）ではさらに `users.info` で表示名解決した結果を `mentions` フィールド（`id`/`real_name`/`display_name`/`mention` など）として返します。 |
 | `confirm` | 任意（`post_slack_message_as_user` のみ） | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返します。 |
 
 `preview_slack_message` / `preview_slack_message_as_user` は Slack へ投稿せず、source label 付与後の payload を返します。`preview_slack_message_as_user` は送信先チャンネル解決のため `channel_id` または `MCP_SLACK_CHANNEL_ID` が必要です。さらに `preview_slack_message_as_user` は、投稿前に一目で確認できるよう次の情報も追加で解決して返します（`conversations.info` / `users.info` / `conversations.replies` を追加で呼び出すため、対応するOAuthスコープが必要です）。
@@ -41,6 +54,12 @@
 
 `post_slack_message`（Webhook側）も同様に `confirm` を省略/`false` にすると投稿せず `posted: false` を返しますが、Webhookには宛先チャンネルIDの概念がなく`conversations.info`等も呼ばないため、`mentions` は表示名解決されない生のSlackユーザーID配列のまま返り、`channel_name` / `thread_parent` は含まれません。
 
+なお `preview_slack_message` は Slack へ何も送らないにもかかわらず `MCP_SLACK_WEBHOOK_URL` を要求します。プレビューは人間が承認する対象であり、そもそも配送不可能な payload を承認させてしまうと、設定ミスが発覚するのが「承認後」になるためです。
+
+### `mentions` と `blocks` の併用について
+
+`mentions` と `blocks` を同時に指定するとエラーになります。`mentions` は `text` の先頭に `<@ID>` を挿入しますが、Slackは `blocks` があるとそちらを本文として描画し、`text` は通知フォールバックにしか使いません。つまり併用すると「通知は飛ぶが、メッセージ本文のどこにもメンションが見えない」という状態になります。`blocks` を使う場合は、`blocks` 内の任意の位置に `<@ID>` を自分で書いてください（どこに置くべきかは呼び出し側の判断であり、サーバー側では推測しません）。
+
 ## `update_slack_message`
 
 | フィールド | 必須 | 説明 |
@@ -50,8 +69,15 @@
 | `text` | 任意 | 更新後の本文。`blocks` または `attachments` を指定しない場合は必須です。 |
 | `blocks` | 任意 | 更新後のSlack Block Kit blocks配列。指定すると既存のblocksを置き換えます。 |
 | `attachments` | 任意 | 更新後のSlack attachments配列。指定すると既存のattachmentsを置き換えます。 |
+| `confirm` | 任意 | `true` にすると実際に更新します。省略/`false` の場合は更新せず、プレビューのみ返します。 |
 
 `update_slack_message` で更新できるのは元の投稿者本人（`MCP_SLACK_USER_TOKEN` なら同じユーザー、Botトークンなら同じBot）が投稿したメッセージのみです。`post_slack_message_as_user` と同様、`text`/`blocks`/`attachments` は既存の内容を丸ごと置き換えます（一部だけの差分更新はできません）。
+
+投稿系ツールと同じく `confirm` ゲートがあります。`confirm` を省略/`false` にすると更新は行わず、`updated: false` と合わせて次を返します。
+
+- `channel_name`: 対象チャンネルの表示名
+- `current`: **更新前の**メッセージ内容（上書きで消える内容）
+- `text`: 適用しようとしている更新後の本文
 
 ## `delete_slack_message`
 
@@ -59,6 +85,15 @@
 | --- | :---: | --- |
 | `ts` | 必須 | 削除対象メッセージのts。`post_slack_message_as_user` の戻り値を利用できます。 |
 | `channel_id` | 任意 | 削除対象のチャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
+| `confirm` | 任意 | `true` にすると実際に削除します。省略/`false` の場合は削除せず、プレビューのみ返します。 |
+
+削除はこのサーバーが提供する操作の中で最も取り返しがつかない（Slackにundoはありません）ため、投稿系と同じ `confirm` ゲートを持ちます。`confirm` を省略/`false` にすると削除は行わず、`deleted: false` と `channel_name`、そして `target`（削除されるメッセージそのものの内容）を返します。
+
+### 対象メッセージが取得できない場合
+
+`update_slack_message` / `delete_slack_message` のプレビューは `conversations.history`（スレッド返信の場合は `conversations.replies`）で対象メッセージを取得しますが、`chat.update` / `chat.delete` 自体には履歴スコープが不要です。したがってスコープ不足などで対象を読めなくても操作はブロックされず、`current` / `target` を省略したうえで `current_note` / `target_note` に理由を入れて返します。**内容を確認しないまま実行することになる**というシグナルなので、承認前に必ず確認してください。
+
+対象の特定は ts の完全一致で行います。`conversations.history` はトップレベルのメッセージしか返さないため、スレッド返信の ts を渡すと Slack は「直近の古い親メッセージ」を返してきます。それを削除確認画面に出すと全く別のメッセージを見せることになるので、ts が一致しない場合は `conversations.replies` にフォールバックしてスレッド内を走査します。
 
 ## `list_slack_channels`
 

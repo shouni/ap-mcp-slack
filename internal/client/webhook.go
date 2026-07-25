@@ -52,8 +52,23 @@ type PostMessageResponse struct {
 	Body       string `json:"body"`
 }
 
+// WebhookConfigured reports whether an Incoming Webhook URL was configured. Tool
+// registration uses it to leave the webhook tools out entirely when they could only
+// ever fail, so a caller can't pick one and discover that at send time.
+func (w *webhookTransport) WebhookConfigured() bool {
+	return w.webhookURL != ""
+}
+
 // PreviewMessage builds the webhook payload without sending it.
+//
+// This checks the webhook URL even though it sends nothing: a preview whose payload
+// can never actually be delivered is worse than useless, because the confirm-gated
+// post flow asks a human to approve that preview first. Failing here surfaces the
+// misconfiguration before anyone signs off on it, not after.
 func (w *webhookTransport) PreviewMessage(msg Message) (Message, error) {
+	if w.webhookURL == "" {
+		return Message{}, fmt.Errorf("slack: webhook URL is required")
+	}
 	if strings.TrimSpace(msg.Text) == "" {
 		return Message{}, fmt.Errorf("slack: text is required")
 	}

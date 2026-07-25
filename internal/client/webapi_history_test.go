@@ -177,3 +177,109 @@ func TestSummarizeMessagesIncludesRawBlocksWhenRequested(t *testing.T) {
 		t.Fatalf("summary = %+v, want raw Blocks/Attachments included", summary)
 	}
 }
+
+func TestGetMessageFindsTopLevelMessage(t *testing.T) {
+	t.Parallel()
+
+	const ts = "1700000000.000100"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/conversations.history" {
+			t.Fatalf("path = %s, want conversations.history only", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U001","text":"target","ts":"` + ts + `"}],"has_more":false}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	message, err := client.GetMessage(context.Background(), "C123", ts)
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v", err)
+	}
+	if message == nil || message.TS != ts || message.Text != "target" {
+		t.Fatalf("message = %+v, want the message at ts", message)
+	}
+}
+
+// TestGetMessageFallsBackToRepliesForThreadReply is the reason GetMessage compares
+// timestamps instead of trusting the first history result. conversations.history
+// carries only top-level messages, so for a thread reply Slack answers with the
+// nearest older parent — which, shown above a delete confirmation, would describe the
+// wrong message entirely.
+func TestGetMessageFallsBackToRepliesForThreadReply(t *testing.T) {
+	t.Parallel()
+
+	const (
+		parentTS = "1700000000.000100"
+		replyTS  = "1700000009.000200"
+	)
+	var repliesCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/conversations.history":
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U001","text":"unrelated parent","ts":"` + parentTS + `"}],"has_more":false}`))
+		case "/conversations.replies":
+			repliesCalled = true
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U001","text":"unrelated parent","ts":"` + parentTS + `"},{"type":"message","user":"U002","text":"the reply","ts":"` + replyTS + `"}],"has_more":false}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	message, err := client.GetMessage(context.Background(), "C123", replyTS)
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v", err)
+	}
+	if !repliesCalled {
+		t.Fatal("conversations.replies was not called, want a fallback lookup")
+	}
+	if message == nil || message.TS != replyTS || message.Text != "the reply" {
+		t.Fatalf("message = %+v, want the reply at %s, not the parent", message, replyTS)
+	}
+}
+
+func TestGetMessageReportsMissingMessageAsNil(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"messages":[],"has_more":false}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	message, err := client.GetMessage(context.Background(), "C123", "1700000000.000100")
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v, want a nil message and no error", err)
+	}
+	if message != nil {
+		t.Fatalf("message = %+v, want nil", message)
+	}
+}
+
+func TestGetMessageRequiresTokenAndTS(t *testing.T) {
+	t.Parallel()
+
+	if _, err := NewSlackClientWithConfig(SlackClientConfig{}).GetMessage(context.Background(), "C123", "1.1"); err == nil {
+		t.Fatal("GetMessage() error = nil without a token, want error")
+	}
+	client := NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
+	if _, err := client.GetMessage(context.Background(), "C123", "  "); err == nil {
+		t.Fatal("GetMessage() error = nil for blank ts, want error")
+	}
+	if _, err := client.GetMessage(context.Background(), "", "1.1"); err == nil {
+		t.Fatal("GetMessage() error = nil without a channel, want error")
+	}
+}

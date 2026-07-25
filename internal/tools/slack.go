@@ -17,8 +17,24 @@ func NewSlackTools(c *client.SlackClient) *SlackTools {
 	return &SlackTools{client: c}
 }
 
-// Register registers Slack tools on the MCP server.
+// Register registers the Slack tools each configured transport can actually serve.
+//
+// Registration is gated rather than unconditional because an MCP client's model
+// picks tools from the advertised list and has no way to know which ones the
+// process was given credentials for. Advertising a webhook tool to a token-only
+// deployment invites the model to choose it, build a payload, get a human to approve
+// the preview, and only then fail — so the tool is simply not offered.
 func (t *SlackTools) Register(server *mcp.Server) {
+	if t.client.WebhookConfigured() {
+		t.registerWebhookTools(server)
+	}
+	if t.client.WebAPIConfigured() {
+		t.registerWebAPITools(server)
+	}
+}
+
+// registerWebhookTools registers the tools backed by MCP_SLACK_WEBHOOK_URL.
+func (t *SlackTools) registerWebhookTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "preview_slack_message",
 		Description: "post_slack_message で送信される Slack Incoming Webhook payload を、Slackへ投稿せずに確認します。",
@@ -28,7 +44,10 @@ func (t *SlackTools) Register(server *mcp.Server) {
 		Name:        "post_slack_message",
 		Description: "MCP_SLACK_WEBHOOK_URL の Slack Incoming Webhook にメッセージを投稿します。",
 	}, t.postSlackMessage)
+}
 
+// registerWebAPITools registers the tools backed by a Slack Web API token.
+func (t *SlackTools) registerWebAPITools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "preview_slack_message_as_user",
 		Description: "post_slack_message_as_user で送信される Slack Web API chat.postMessage payload を、Slackへ投稿せずに確認します。",
@@ -41,12 +60,12 @@ func (t *SlackTools) Register(server *mcp.Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "update_slack_message",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.update で投稿済みメッセージの内容を更新します。更新できるのは元の投稿者本人（同じユーザー/ボット）の投稿のみです。",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.update で投稿済みメッセージの内容を更新します。更新できるのは元の投稿者本人（同じユーザー/ボット）の投稿のみです。confirm=false（省略時）は更新せず、現在の本文と更新後の内容を並べたプレビューのみを返します。",
 	}, t.updateSlackMessage)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "delete_slack_message",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.delete でメッセージを削除します。",
+		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.delete でメッセージを削除します。削除は取り消せません。confirm=false（省略時）は削除せず、削除対象メッセージの内容をプレビューとして返します。",
 	}, t.deleteSlackMessage)
 
 	mcp.AddTool(server, &mcp.Tool{

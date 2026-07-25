@@ -32,17 +32,6 @@ func TestListSlackUsers(t *testing.T) {
 	}
 }
 
-func TestListSlackUsersRequiresToken(t *testing.T) {
-	t.Parallel()
-
-	session := newTestSession(t, client.SlackClientConfig{})
-
-	result := callTool(t, session, "list_slack_users", map[string]any{}, nil)
-	if !result.IsError {
-		t.Fatal("CallTool() IsError = false, want token error")
-	}
-}
-
 func TestLookupSlackUserByEmail(t *testing.T) {
 	t.Parallel()
 

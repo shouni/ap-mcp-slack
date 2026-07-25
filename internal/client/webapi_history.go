@@ -148,6 +148,75 @@ func (w *webAPITransport) GetConversationReplies(ctx context.Context, opts Conve
 	}, nil
 }
 
+// GetMessage fetches the single message at ts in channelID, so the update/delete
+// tools can show a caller which message they are about to rewrite or destroy.
+//
+// conversations.history on its own is not enough. It only returns top-level channel
+// messages, so for a thread reply Slack answers with the nearest *older* top-level
+// message instead — precisely the wrong message to display above a delete
+// confirmation. Every candidate's ts is therefore compared against the requested one,
+// and only on a mismatch (or an empty page) does this fall back to
+// conversations.replies, which accepts any ts within a thread and returns the whole
+// thread to scan.
+//
+// A message that simply isn't there is reported as (nil, nil) rather than an error,
+// since "no such message" is a legitimate answer the caller should see rather than a
+// failure. API errors are returned as-is and left for the caller to downgrade:
+// chat.update and chat.delete need no history scope, so a token that can delete but
+// not read must still be able to delete.
+func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) (*SlackMessageSummary, error) {
+	if err := w.requireToken(); err != nil {
+		return nil, err
+	}
+	channelID = w.channelIDOrDefault(channelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("slack: channel_id is required")
+	}
+	ts = strings.TrimSpace(ts)
+	if ts == "" {
+		return nil, fmt.Errorf("slack: ts is required")
+	}
+
+	history, historyErr := w.GetConversationHistory(ctx, ConversationHistoryOptions{
+		ChannelID: channelID,
+		Latest:    ts,
+		Inclusive: true,
+		Limit:     1,
+	})
+	if historyErr == nil {
+		if message := findMessageByTS(history.Messages, ts); message != nil {
+			return message, nil
+		}
+	}
+
+	replies, err := w.GetConversationReplies(ctx, ConversationRepliesOptions{
+		ChannelID: channelID,
+		TS:        ts,
+		Inclusive: true,
+		Limit:     defaultMessageListLimit,
+	})
+	if err != nil {
+		// Prefer the history error when both calls failed: history is the call that
+		// covers ordinary channel messages, so its failure is the more informative one.
+		if historyErr != nil {
+			return nil, historyErr
+		}
+		return nil, err
+	}
+	return findMessageByTS(replies.Messages, ts), nil
+}
+
+// findMessageByTS returns the message whose ts is exactly ts, or nil. It returns a
+// pointer into messages, so callers must not retain it past the slice's lifetime.
+func findMessageByTS(messages []SlackMessageSummary, ts string) *SlackMessageSummary {
+	for i := range messages {
+		if messages[i].TS == ts {
+			return &messages[i]
+		}
+	}
+	return nil
+}
+
 func summarizeMessages(messages []slackapi.Message, includeRawBlocks bool) []SlackMessageSummary {
 	out := make([]SlackMessageSummary, 0, len(messages))
 	for _, message := range messages {
