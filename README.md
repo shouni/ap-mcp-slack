@@ -6,9 +6,9 @@
 [![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/shouni/ap-mcp-slack)](https://github.com/shouni/ap-mcp-slack/tags)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Slack Incoming Webhook と Slack Web API で投稿・削除するための MCP サーバーです。
+Slack Incoming Webhook と Slack Web API で投稿・削除するためのMCPサーバーです。
 
-MCP クライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
+MCPクライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
 
 ## 提供ツール
 
@@ -16,14 +16,14 @@ MCP クライアントからコマンドとして起動され、stdin/stdout の
 
 ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。トークンのみを設定した環境では Webhook 系のツール（`post_slack_message`）は一覧に現れず、その逆も同様です。
 
-Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて `confirm` ゲートを持ちます。`confirm` を省略/falseにした場合は**Slackに一切触れず**、実際に送信される payload をプレビューとして返します。プレビュー専用の別ツールは意図的に用意していません（プレビューはツールを飛ばして到達できる別経路ではなく、既定の動作です）。
+Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて `confirm` ゲートを持ちます。`confirm` を省略/`false` にした場合は**Slackに一切触れず**、実際に送信される payload をプレビューとして返します。プレビュー専用の別ツールは意図的に用意していません（プレビューはツールを飛ばして到達できる別経路ではなく、既定の動作です）。
 
 | ツール名 | 説明 |
 | --- | --- |
-| `post_slack_message` | `confirm=true` の場合のみ `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿。`confirm` を省略/falseにした場合は投稿せずプレビューのみ返す |
-| `post_slack_message_as_user` | `confirm=true` の場合のみ `chat.postMessage` で投稿し、`channel_id` と `ts` を返す。`confirm` を省略/falseにした場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返す |
-| `update_slack_message` | `confirm=true` の場合のみ `chat.update` で投稿済みメッセージの内容を更新。`confirm` を省略/falseにした場合は更新せず、更新前の内容と更新後の payload を並べたプレビューのみ返す |
-| `delete_slack_message` | `confirm=true` の場合のみ `chat.delete` で投稿済みメッセージを削除。`confirm` を省略/falseにした場合は削除せず、削除対象メッセージの内容をプレビューとして返す |
+| `post_slack_message` | `confirm=true` の場合のみ `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿。`confirm` を省略/`false` にした場合は投稿せずプレビューのみ返す |
+| `post_slack_message_as_user` | `confirm=true` の場合のみ `chat.postMessage` で投稿し、`channel_id` と `ts` を返す。`confirm` を省略/`false` にした場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返す |
+| `update_slack_message` | `confirm=true` の場合のみ `chat.update` で投稿済みメッセージの内容を更新。`confirm` を省略/`false` にした場合は更新せず、更新前の内容と更新後の payload を並べたプレビューのみ返す |
+| `delete_slack_message` | `confirm=true` の場合のみ `chat.delete` で投稿済みメッセージを削除。`confirm` を省略/`false` にした場合は削除せず、削除対象メッセージの内容をプレビューとして返す |
 | `list_slack_channels` | `conversations.list` でワークスペース全体のチャンネル一覧を取得 |
 | `list_joined_slack_channels` | `users.conversations` でトークン所有者が参加しているチャンネルのみを取得 |
 | `get_slack_channel_info` | `conversations.info` で単一チャンネルの詳細情報を取得 |
@@ -45,7 +45,7 @@ ap-mcp-slack/
     ├── config/          # 環境変数ロード
     ├── app/             # DI コンテナ（SlackClient・設定の集約）
     ├── client/          # Slack Incoming Webhook / Web API クライアント
-    ├── tools/           # MCP ツール定義
+    ├── tools/           # MCPツール定義
     └── server/          # MCP stdio サーバー
 ```
 
@@ -63,7 +63,7 @@ go build -ldflags "-X ap-mcp-slack/internal/server.Version=$(git describe --tags
 
 ## MCPクライアントへの登録例
 
-stdio transport に対応した MCP クライアントであれば、Codex 以外（Claude Code、Claude Desktop など）からも同じバイナリをそのまま起動できます。
+stdio transport に対応したMCPクライアントであれば、Codex 以外（Claude Code、Claude Desktop など）からも同じバイナリをそのまま起動できます。
 
 ### Claude Code
 
@@ -124,7 +124,7 @@ go run .
 | `MCP_SLACK_CHANNEL_ID` | 任意 | Web API投稿・削除のデフォルトチャンネルID。ツール入力の `channel_id` で上書き可能。 |
 | `MCP_SLACK_SOURCE_LABEL` | 任意 | `post_slack_message` / `post_slack_message_as_user` / `update_slack_message` の payload 末尾に付与する投稿元ラベル。Block Kitのcontextブロックとして自動付与されます。未設定時は `ap-mcp-slack (MCP) 経由`。 |
 
-`MCP_SLACK_WEBHOOK_URL` とトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN` のいずれか）は、少なくとも一方を設定してください。どちらも未設定の場合、登録できるツールが1つも無くなるため、サーバーは起動時にエラー終了します（正常に接続したうえでツールを何も広告しない、という分かりにくい状態を避けるためです）。
+`MCP_SLACK_WEBHOOK_URL` とトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN` のいずれか）は、少なくとも一方を設定してください。どちらも未設定の場合、登録できるツールが1つも無くなるため、サーバーは起動時にエラー終了します（正常に接続したうえでツールを1つも提示しない、という分かりにくい状態を避けるためです）。
 
 必要な Slack トークンスコープは [docs/tools.md](docs/tools.md#必要な-slack-トークンスコープ) を参照してください。
 
