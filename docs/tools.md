@@ -1,6 +1,6 @@
 # ツールリファレンス (Tools Reference)
 
-`ap-mcp-slack` が提供する各 MCP ツールの入力フィールド・OAuthスコープの詳細です。ツール一覧・導入手順・ビルド方法は [README.md](../README.md) を参照してください。
+`ap-mcp-slack` が提供する各MCPツールの入力フィールド・OAuthスコープの詳細です。ツール一覧・導入手順・ビルド方法は [README.md](../README.md) を参照してください。
 
 ## ツールの登録条件
 
@@ -13,7 +13,7 @@
 | 両方 | すべて |
 | どちらも未設定 | 起動時にエラー終了します |
 
-これは、MCPクライアント側のモデルが「広告されているツール一覧」から選択するためです。認証情報のないトランスポートのツールを一覧に載せると、モデルがそれを選び、payloadを組み立て、人間にプレビューを承認させたうえで送信時に初めて失敗する、という最悪の順序になります。使えないツールは最初から見せません。
+これは、MCPクライアント側のモデルが「提示されたツール一覧」から選択するためです。認証情報のないトランスポートのツールを一覧に載せると、モデルがそれを選び、payloadを組み立て、人間にプレビューを承認させたうえで送信時に初めて失敗する、という最悪の順序になります。使えないツールは最初から見せません。
 
 ## プレビューは `confirm` の既定動作です
 
@@ -58,7 +58,7 @@ Slackを変更するツール（`post_slack_message` / `post_slack_message_as_us
 
 内容を確認した上で同じ入力に `confirm: true` を足して再実行すると、実際に投稿されます（`posted: true` と `ts` が返ります）。`payload` は `confirm` の有無にかかわらず同一で、プレビューで見た payload がそのまま Slack に送られます。
 
-`post_slack_message`（Webhook側）も同様に `confirm` を省略/`false` にすると投稿せず `posted: false` を返しますが、Webhookには宛先チャンネルIDの概念がなく`conversations.info`等も呼ばないため、`mentions` は表示名解決されない生のSlackユーザーID配列のまま返り、`channel_name` / `thread_parent` は含まれません。
+`post_slack_message`（Webhook側）も同様に `confirm` を省略/`false` にすると投稿せず `posted: false` を返しますが、Webhookには宛先チャンネルIDの概念がなく、`conversations.info` なども呼ばないため、`mentions` は表示名解決されない生のSlackユーザーID配列のまま返り、`channel_name` / `thread_parent` は含まれません。
 
 なお `post_slack_message` は `confirm` 未指定（Slackへ何も送らない場合）でも `MCP_SLACK_WEBHOOK_URL` を要求します。プレビューは人間が承認する対象であり、そもそも配送不可能な payload を承認させてしまうと、設定ミスが発覚するのが「承認後」になるためです。
 
@@ -115,7 +115,7 @@ Slackを変更するツール（`post_slack_message` / `post_slack_message_as_us
 
 note が入っている場合は**内容を確認しないまま実行することになる**というシグナルなので、承認前に必ず確認してください。ここでエラーにしてしまうと、そのメッセージを削除する手段がこのサーバーから一切失われるため、あえて降格して人間に判断を委ねています。
 
-対象の特定は ts の完全一致で行います。`conversations.history` はトップレベルのメッセージしか返さないため、スレッド返信の ts を渡すと Slack は「直近の古い親メッセージ」を返してきます。それを削除確認画面に出すと全く別のメッセージを見せることになるので、ts が一致しない場合は `conversations.replies` にフォールバックしてスレッド内を走査します。
+対象の特定は ts の完全一致で行います。`conversations.history` はトップレベルのメッセージしか返さないため、スレッド返信の ts を渡すと Slack は「その ts 以前で最も新しいトップレベルメッセージ」を返してきます。それを削除確認画面に出すと全く別のメッセージを見せることになるので、ts が一致しない場合は `conversations.replies` にフォールバックしてスレッド内を走査します。
 
 `conversations.replies` は、スレッド内のどの ts を渡してもスレッドの**先頭から**返すため、走査はカーソルを追って行います（1ページ100件 × 最大10ページ = 1000件）。1ページだけ読む実装だと、返信が101件目以降にある場合に「見つからない」と報告してしまい、実際には成功する削除の直前に「ts を確認してください」と誤った指示を出すことになります。
 
@@ -130,7 +130,7 @@ note が入っている場合は**内容を確認しないまま実行するこ�
 | `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
 | `sort` | 任意 | 取得した結果に適用する返却前の並び順。`none`, `name_asc`, `name_desc`, `created_asc`, `created_desc` を指定できます。省略時は `name_asc` です。 |
 
-Slack API の `conversations.list` には並び順を指定する引数がないため、`sort` は MCP サーバーが取得した結果にローカルで適用します。
+Slack API の `conversations.list` には並び順を指定する引数がないため、`sort` はMCPサーバーが取得した結果にローカルで適用します。
 
 `list_slack_channels` で `private_channel` を含めて取得するには、トークンに `groups:read` スコープが必要です（`public_channel` のみなら `channels:read` で足ります）。
 
@@ -224,7 +224,9 @@ Slackのカーソルは「そのページ全体の後ろ」を指すため、ペ
 
 `email` が指定されない場合、`name` はまず `users.list` から取得したユーザーの `name` / `real_name` / `display_name` との完全一致（大文字小文字を区別しない）を探します。完全一致が1件もない場合は部分一致にフォールバックします。一致が1件のときのみ `status: "found"` として `user` と `<@U...>` 形式の `mention` を返します。0件なら `status: "not_found"`、複数件なら `status: "ambiguous"` として `candidates` に候補一覧を返し、誤送信を避けるため自動選択はしません。
 
-`name` 検索は 4000 人（1ページ200件 × 20ページ）までを走査して打ち切ります。打ち切りに達した場合は `search_truncated: true` が付きます。これは「ワークスペースにいない」と「探しきれなかった」を区別するためのフラグで、`true` のときの `not_found` は **走査した範囲にいなかった** という意味しかありません。より広く探す必要がある場合は `list_slack_users` に `query` を渡して自分でページングしてください。なお完全一致で1件に決まった場合は、走査を打ち切っていても `search_truncated` は付きません（未走査のメンバーがこれより良い一致になることはないため）。部分一致で1件だけ当たった場合は、打ち切られていれば `search_truncated: true` が付きます。
+`name` 検索は 4000 人（1ページ200件 × 20ページ）までを走査して打ち切ります。打ち切りに達した場合は `search_truncated: true` が付きます。これは「ワークスペースにいない」と「探しきれなかった」を区別するためのフラグで、`true` のときの `not_found` は **走査した範囲にいなかった** という意味しかありません。より広く探す必要がある場合は `list_slack_users` に `query` を渡して自分でページングしてください。
+
+なお完全一致で1件に決まった場合は、走査を打ち切っていても `search_truncated` は付きません（未走査のメンバーがこれより良い一致になることはないため）。部分一致で1件だけ当たった場合は、打ち切られていれば `search_truncated: true` が付きます。
 
 ## `get_slack_auth_info`
 
