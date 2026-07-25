@@ -55,6 +55,12 @@ ap-mcp-slack/
 go build -o ./bin/ap-mcp-slack .
 ```
 
+MCPクライアント側のログにバージョンを表示させたい場合は、ビルド時に埋め込めます（省略時は `dev`）。
+
+```bash
+go build -ldflags "-X ap-mcp-slack/internal/server.Version=$(git describe --tags --always)" -o ./bin/ap-mcp-slack .
+```
+
 ## MCPクライアントへの登録例
 
 stdio transport に対応した MCP クライアントであれば、Codex 以外（Claude Code、Claude Desktop など）からも同じバイナリをそのまま起動できます。

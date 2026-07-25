@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -61,12 +62,12 @@ func TestListChannels(t *testing.T) {
 		t.Fatalf("response = %+v", resp)
 	}
 	wantNames := []string{"alpha", "beta", "zeta"}
-	if len(resp.Names) != len(wantNames) {
-		t.Fatalf("names = %+v, want %+v", resp.Names, wantNames)
+	if len(resp.Channels) != len(wantNames) {
+		t.Fatalf("channels = %+v, want %+v", resp.Channels, wantNames)
 	}
 	for i, want := range wantNames {
-		if resp.Names[i] != want || resp.Channels[i].Name != want {
-			t.Fatalf("names/channels = %+v / %+v, want %q at %d", resp.Names, resp.Channels, want, i)
+		if resp.Channels[i].Name != want {
+			t.Fatalf("channels = %+v, want %q at %d", resp.Channels, want, i)
 		}
 	}
 	if len(requests) != 2 {
@@ -208,12 +209,12 @@ func TestListJoinedChannels(t *testing.T) {
 		t.Fatalf("response = %+v", resp)
 	}
 	wantNames := []string{"alpha", "beta", "zeta"}
-	if len(resp.Names) != len(wantNames) {
-		t.Fatalf("names = %+v, want %+v", resp.Names, wantNames)
+	if len(resp.Channels) != len(wantNames) {
+		t.Fatalf("channels = %+v, want %+v", resp.Channels, wantNames)
 	}
 	for i, want := range wantNames {
-		if resp.Names[i] != want || resp.Channels[i].Name != want || !resp.Channels[i].IsMember {
-			t.Fatalf("names/channels = %+v / %+v, want %q at %d", resp.Names, resp.Channels, want, i)
+		if resp.Channels[i].Name != want || !resp.Channels[i].IsMember {
+			t.Fatalf("channels = %+v, want %q at %d", resp.Channels, want, i)
 		}
 	}
 	if len(requests) != 2 {
@@ -269,6 +270,87 @@ func TestListJoinedChannelsValidatesInputs(t *testing.T) {
 	}
 	if _, err := client.ListJoinedChannels(context.Background(), ListChannelsOptions{Limit: maxChannelListLimit + 1}); err == nil {
 		t.Fatal("ListJoinedChannels() error = nil, want limit error")
+	}
+}
+
+// TestSortChannels covers every accepted sort value, including the tie-breaks. Slack's
+// conversations.list takes no sort argument, so this ordering is entirely ours: nothing
+// upstream would surface a mistake in it, and a caller paging a large workspace sees only
+// the order, not the comparison that produced it.
+func TestSortChannels(t *testing.T) {
+	t.Parallel()
+
+	// Deliberately awkward input: two channels created at the same second (so the
+	// created sorts must fall back to ID), one with no name at all (so the name sorts
+	// must fall back through name_normalized/user/id), and mixed case.
+	newChannels := func() []SlackChannelSummary {
+		return []SlackChannelSummary{
+			{ID: "C003", Name: "Zeta", Created: 300},
+			{ID: "C001", Name: "alpha", Created: 100},
+			{ID: "C002", NameNormalized: "beta", Created: 100},
+			{ID: "C004", Created: 400},
+		}
+	}
+
+	tests := []struct {
+		sort    string
+		wantIDs []string
+	}{
+		// Case-insensitive, and the unnamed channel sorts by its ID ("c004").
+		{sort: ChannelSortNameAsc, wantIDs: []string{"C001", "C002", "C004", "C003"}},
+		{sort: ChannelSortNameDesc, wantIDs: []string{"C003", "C004", "C002", "C001"}},
+		// C001 and C002 share Created=100, so the ID breaks the tie in both directions.
+		{sort: ChannelSortCreatedAsc, wantIDs: []string{"C001", "C002", "C003", "C004"}},
+		{sort: ChannelSortCreatedDesc, wantIDs: []string{"C004", "C003", "C001", "C002"}},
+		// "none" must leave Slack's own order untouched.
+		{sort: ChannelSortNone, wantIDs: []string{"C003", "C001", "C002", "C004"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.sort, func(t *testing.T) {
+			t.Parallel()
+
+			channels := newChannels()
+			sortChannels(channels, tc.sort)
+
+			gotIDs := make([]string, 0, len(channels))
+			for _, channel := range channels {
+				gotIDs = append(gotIDs, channel.ID)
+			}
+			if !slices.Equal(gotIDs, tc.wantIDs) {
+				t.Fatalf("sort %q = %v, want %v", tc.sort, gotIDs, tc.wantIDs)
+			}
+		})
+	}
+}
+
+// TestListChannelsAppliesSort pins that the sort reaches the response, not just
+// sortChannels: the option is normalized on the way in and echoed back on the way out.
+func TestListChannelsAppliesSort(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"channels":[
+			{"id":"C001","name":"alpha","created":100},
+			{"id":"C002","name":"beta","created":300}
+		],"response_metadata":{"next_cursor":""}}`))
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListChannels(context.Background(), ListChannelsOptions{Sort: " CREATED_DESC "})
+	if err != nil {
+		t.Fatalf("ListChannels() error = %v", err)
+	}
+	if resp.Sort != ChannelSortCreatedDesc {
+		t.Fatalf("resp.Sort = %q, want the normalized %q", resp.Sort, ChannelSortCreatedDesc)
+	}
+	if resp.Channels[0].ID != "C002" || resp.Channels[1].ID != "C001" {
+		t.Fatalf("channels = %+v, want newest first", resp.Channels)
 	}
 }
 

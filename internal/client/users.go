@@ -18,7 +18,11 @@ const (
 	// resolving by name, so a single tool call can't loop unboundedly against a very
 	// large workspace. Callers that need to search further should page through
 	// ListUsers with query directly instead.
-	resolveUserSearchCap = 5000
+	//
+	// Derived from collectPages' own page bound so the two cannot disagree: stating it
+	// as a literal would let whichever bound happened to be tighter silently override
+	// the other, and ResolveUser's SearchTruncated would then describe the wrong one.
+	resolveUserSearchCap = maxListPages * userListPageSize
 )
 
 // Status values returned by resolve_slack_user.

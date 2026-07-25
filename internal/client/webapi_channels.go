@@ -60,7 +60,6 @@ type SlackChannelSummary struct {
 type ListChannelsResponse struct {
 	OK         bool                  `json:"ok"`
 	Channels   []SlackChannelSummary `json:"channels"`
-	Names      []string              `json:"names"`
 	Count      int                   `json:"count"`
 	NextCursor string                `json:"next_cursor,omitempty"`
 	Sort       string                `json:"sort"`
@@ -193,7 +192,6 @@ func (w *webAPITransport) listChannels(ctx context.Context, apiMethod string, op
 	return &ListChannelsResponse{
 		OK:         true,
 		Channels:   channels,
-		Names:      channelNames(channels),
 		Count:      len(channels),
 		NextCursor: nextCursor,
 		Sort:       sortBy,
@@ -333,14 +331,4 @@ func channelNameKey(channel SlackChannelSummary) string {
 		}
 	}
 	return ""
-}
-
-func channelNames(channels []SlackChannelSummary) []string {
-	names := make([]string, 0, len(channels))
-	for _, channel := range channels {
-		if channel.Name != "" {
-			names = append(names, channel.Name)
-		}
-	}
-	return names
 }

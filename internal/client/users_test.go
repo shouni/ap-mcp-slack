@@ -149,6 +149,44 @@ func TestListUsersKeepsOverfullPage(t *testing.T) {
 	}
 }
 
+// TestListUsersStopsAtPageBudget covers a filter that matches nothing: limit is never
+// reached, so without a page bound one tool call would walk the entire workspace. The
+// per-request timeout does not help — it bounds each request, not how many are made.
+// Stopping is not an error: the resume cursor comes back as usual, so a caller who wants
+// to keep going just calls again with it.
+func TestListUsersStopsAtPageBudget(t *testing.T) {
+	t.Parallel()
+
+	var pages int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		w.Header().Set("Content-Type", "application/json")
+		// Always another page, never a member the query can match.
+		_, _ = fmt.Fprintf(w,
+			`{"ok":true,"members":[{"id":"U%d","name":"member-%d"}],"response_metadata":{"next_cursor":"cursor-%d"}}`,
+			pages, pages, pages+1)
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListUsers(context.Background(), ListUsersOptions{Query: "no-such-person"})
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	if pages != maxListPages {
+		t.Fatalf("requests = %d, want the walk bounded at %d pages", pages, maxListPages)
+	}
+	if resp.Count != 0 {
+		t.Fatalf("count = %d, want 0 matches: %+v", resp.Count, resp.Users)
+	}
+	if resp.NextCursor == "" {
+		t.Fatal("next_cursor = \"\", want a resume cursor so the caller can continue")
+	}
+}
+
 func TestListUsersExcludesDeletedByDefault(t *testing.T) {
 	t.Parallel()
 

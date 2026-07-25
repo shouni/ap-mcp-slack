@@ -11,6 +11,14 @@ import (
 const (
 	defaultMessageListLimit = 100
 	maxMessageListLimit     = 1000
+
+	// messageSearchPageSize and maxMessageSearchPages bound the thread walk GetMessage
+	// performs to locate one ts, so resolving an update/delete target cannot page
+	// through an arbitrarily long thread. Together they cover the first 1000 messages
+	// of a thread; beyond that GetMessage reports the search as truncated instead of
+	// claiming the message does not exist.
+	messageSearchPageSize = 100
+	maxMessageSearchPages = 10
 )
 
 // ConversationHistoryOptions configures Slack conversations.history requests.
@@ -53,7 +61,10 @@ type SlackMessageSummary struct {
 	// the message content.
 	Blocks      any `json:"blocks,omitempty"`
 	Attachments any `json:"attachments,omitempty"`
-	// Metadata is only populated when the caller sets IncludeAllMetadata.
+	// Metadata carries Slack's message metadata when the message has any. In practice
+	// that means the caller set IncludeAllMetadata, since Slack only returns metadata
+	// when asked — but this is populated from what arrived rather than from the request
+	// flag, so it stays correct if that ever stops holding.
 	Metadata   any      `json:"metadata,omitempty"`
 	TS         string   `json:"ts,omitempty"`
 	ThreadTS   string   `json:"thread_ts,omitempty"`
@@ -156,25 +167,32 @@ func (w *webAPITransport) GetConversationReplies(ctx context.Context, opts Conve
 // message instead — precisely the wrong message to display above a delete
 // confirmation. Every candidate's ts is therefore compared against the requested one,
 // and only on a mismatch (or an empty page) does this fall back to
-// conversations.replies, which accepts any ts within a thread and returns the whole
-// thread to scan.
+// conversations.replies.
 //
-// A message that simply isn't there is reported as (nil, nil) rather than an error,
-// since "no such message" is a legitimate answer the caller should see rather than a
-// failure. API errors are returned as-is and left for the caller to downgrade:
+// The replies fallback follows Slack's cursor rather than reading one page.
+// conversations.replies returns a thread from its beginning no matter which member's ts
+// was asked about, so a reply past the first page is unreachable without paging — and
+// reporting it as absent would tell a caller their ts is wrong moments before a delete
+// that will in fact succeed. The walk is bounded by maxMessageSearchPages; hitting that
+// bound is reported through the second result rather than as "not found", so the caller
+// can say "gave up looking" instead of "no such message".
+//
+// A message that simply isn't there is reported as (nil, false, nil) rather than an
+// error, since "no such message" is a legitimate answer the caller should see rather
+// than a failure. API errors are returned as-is and left for the caller to downgrade:
 // chat.update and chat.delete need no history scope, so a token that can delete but
 // not read must still be able to delete.
-func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) (*SlackMessageSummary, error) {
+func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) (message *SlackMessageSummary, searchTruncated bool, err error) {
 	if err := w.requireToken(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	channelID, err := w.ResolveChannelID(channelID)
+	channelID, err = w.ResolveChannelID(channelID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	ts = strings.TrimSpace(ts)
 	if ts == "" {
-		return nil, fmt.Errorf("slack: ts is required")
+		return nil, false, fmt.Errorf("slack: ts is required")
 	}
 
 	history, historyErr := w.GetConversationHistory(ctx, ConversationHistoryOptions{
@@ -184,26 +202,37 @@ func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) 
 		Limit:     1,
 	})
 	if historyErr == nil {
-		if message := findMessageByTS(history.Messages, ts); message != nil {
-			return message, nil
+		if found := findMessageByTS(history.Messages, ts); found != nil {
+			return found, false, nil
 		}
 	}
 
-	replies, err := w.GetConversationReplies(ctx, ConversationRepliesOptions{
-		ChannelID: channelID,
-		TS:        ts,
-		Inclusive: true,
-		Limit:     defaultMessageListLimit,
-	})
-	if err != nil {
-		// Prefer the history error when both calls failed: history is the call that
-		// covers ordinary channel messages, so its failure is the more informative one.
-		if historyErr != nil {
-			return nil, historyErr
+	cursor := ""
+	for range maxMessageSearchPages {
+		replies, err := w.GetConversationReplies(ctx, ConversationRepliesOptions{
+			ChannelID: channelID,
+			TS:        ts,
+			Cursor:    cursor,
+			Inclusive: true,
+			Limit:     messageSearchPageSize,
+		})
+		if err != nil {
+			// Prefer the history error when both calls failed: history is the call that
+			// covers ordinary channel messages, so its failure is the more informative one.
+			if historyErr != nil {
+				return nil, false, historyErr
+			}
+			return nil, false, err
 		}
-		return nil, err
+		if found := findMessageByTS(replies.Messages, ts); found != nil {
+			return found, false, nil
+		}
+		cursor = replies.NextCursor
+		if cursor == "" {
+			return nil, false, nil
+		}
 	}
-	return findMessageByTS(replies.Messages, ts), nil
+	return nil, true, nil
 }
 
 // findMessageByTS returns the message whose ts is exactly ts, or nil. It returns a

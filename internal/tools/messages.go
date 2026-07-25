@@ -212,6 +212,10 @@ const (
 	targetNoteNotFound    = "対象メッセージが見つかりませんでした。ts とチャンネルを確認してください。"
 	targetNoteUnreadable  = "対象メッセージを取得できませんでした（履歴スコープ不足など）。内容を確認せずに実行することになります。"
 	targetNoteUnnamedChan = "チャンネル名を解決できませんでした（channels:read / groups:read スコープ不足など）。channel_id が意図した宛先か確認してください。"
+	// targetNoteSearchTruncated is deliberately not targetNoteNotFound: the ts may be
+	// perfectly valid and the operation may well succeed, so telling the caller to
+	// re-check it would send them after the wrong problem.
+	targetNoteSearchTruncated = "対象メッセージの検索を打ち切りました（非常に長いスレッド内の返信の可能性があります）。ts が正しくても内容を表示できないことがあるため、内容を確認せずに実行することになります。"
 )
 
 // resolvedTarget describes the message an update or delete would act on.
@@ -254,14 +258,16 @@ func (t *SlackTools) resolveTarget(ctx context.Context, channelID, ts string) (r
 		notes = append(notes, targetNoteUnnamedChan)
 	}
 
-	message, err := t.client.GetMessage(ctx, target.ChannelID, ts)
+	message, searchTruncated, err := t.client.GetMessage(ctx, target.ChannelID, ts)
 	switch {
 	case err != nil:
 		notes = append(notes, targetNoteUnreadable)
-	case message == nil:
-		notes = append(notes, targetNoteNotFound)
-	default:
+	case message != nil:
 		target.Message = message
+	case searchTruncated:
+		notes = append(notes, targetNoteSearchTruncated)
+	default:
+		notes = append(notes, targetNoteNotFound)
 	}
 
 	target.Note = strings.Join(notes, " ")

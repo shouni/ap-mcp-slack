@@ -61,11 +61,20 @@ func normalizeListLimit(limit, defaultLimit, maxLimit int) (int, error) {
 // next one ("" once the listing is exhausted).
 type pageFetcher[T any] func(ctx context.Context, cursor string, requestLimit int) (items []T, nextCursor string, err error)
 
+// maxListPages bounds how many Slack requests one paginated listing may make. A filter
+// that matches little (a rare users.list query, say) reaches limit slowly or never, and
+// without a bound a single tool call would page through an entire workspace: the
+// per-request timeout does nothing about request *count*. Hitting the bound is not an
+// error — the resume cursor is returned as usual, so a caller who genuinely wants to go
+// further simply calls again with it.
+const maxListPages = 20
+
 // collectPages pages through fetch, starting at cursor, until limit items that keep
-// accepts have been collected or Slack has no more pages. It returns the collected
-// items and the cursor to resume from (empty once exhausted). A nil keep accepts
-// everything. It backs every paginated listing here (channels, joined channels,
-// users), which differ only in the API they call and how they filter.
+// accepts have been collected, Slack has no more pages, or maxListPages requests have
+// been made. It returns the collected items and the cursor to resume from (empty once
+// the listing is exhausted). A nil keep accepts everything. It backs every paginated
+// listing here (channels, joined channels, users), which differ only in the API they
+// call and how they filter.
 //
 // Every item a page yields is kept, even when that pushes the total past limit.
 // Slack's cursor resumes *after* the whole page no matter how many of the page's items
@@ -77,7 +86,11 @@ func collectPages[T any](ctx context.Context, apiMethod string, limit, pageSize 
 	items := make([]T, 0, min(limit, pageSize))
 	seenCursors := map[string]struct{}{}
 
-	for len(items) < limit {
+	for range maxListPages {
+		if len(items) >= limit {
+			break
+		}
+
 		page, nextCursor, err := fetch(ctx, cursor, min(pageSize, limit-len(items)))
 		if err != nil {
 			return nil, "", fmt.Errorf("slack: %s failed: %w", apiMethod, err)
