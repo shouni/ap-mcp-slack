@@ -10,6 +10,14 @@ import (
 	"ap-mcp-slack/internal/tools"
 )
 
+// Version is reported to the MCP client during initialization. Override it at build
+// time so a client's logs identify which build it is talking to:
+//
+//	go build -ldflags "-X ap-mcp-slack/internal/server.Version=$(git describe --tags --always)"
+//
+// It stays "dev" for plain `go build` and `go test`.
+var Version = "dev"
+
 // Server is an MCP server using stdio transport.
 type Server struct {
 	mcpServer *mcp.Server
@@ -19,7 +27,7 @@ type Server struct {
 func New(container *app.Container) *Server {
 	mcpServer := mcp.NewServer(&mcp.Implementation{
 		Name:    "ap-mcp-slack",
-		Version: "dev",
+		Version: Version,
 	}, nil)
 
 	tools.NewSlackTools(container.Slack).Register(mcpServer)

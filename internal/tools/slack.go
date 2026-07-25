@@ -47,64 +47,70 @@ func (t *SlackTools) registerWebhookTools(server *mcp.Server) {
 }
 
 // registerWebAPITools registers the tools backed by a Slack Web API token.
+//
+// Descriptions say what a tool does and how to choose between neighbours, and leave out
+// which environment variable supplied the token. A tool is only advertised once its
+// credentials are present, so naming them tells the model something it cannot act on and
+// cannot choose differently because of — while costing context on every request. Setup
+// and OAuth scopes belong in docs/tools.md, which the operator reads.
 func (t *SlackTools) registerWebAPITools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message_as_user",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.postMessage でメッセージを投稿します。confirm=false（省略時）は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみを返します。投稿時は channel_id と ts を返します。",
+		Description: "Slackにメッセージを投稿します（chat.postMessage）。トークン所有者本人の名前で投稿されます。confirm=false（省略時）は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューを返します。投稿時は channel_id と ts を返し、ts は update_slack_message / delete_slack_message にそのまま渡せます。",
 	}, t.postSlackMessageAsUser)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "update_slack_message",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.update で投稿済みメッセージの内容を更新します。更新できるのは元の投稿者本人（同じユーザー/ボット）の投稿のみです。confirm=false（省略時）は更新せず、現在の本文と更新後の内容を並べたプレビューのみを返します。",
+		Description: "投稿済みメッセージの内容を書き換えます（chat.update）。書き換えられるのは元の投稿者本人の投稿のみで、text/blocks/attachments は既存の内容を丸ごと置き換えます（部分更新はできません）。confirm=false（省略時）は更新せず、現在の本文と更新後の payload を並べたプレビューを返します。",
 	}, t.updateSlackMessage)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "delete_slack_message",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API chat.delete でメッセージを削除します。削除は取り消せません。confirm=false（省略時）は削除せず、削除対象メッセージの内容をプレビューとして返します。",
+		Description: "メッセージを削除します（chat.delete）。削除は取り消せません。confirm=false（省略時）は削除せず、削除対象メッセージの内容をプレビューとして返します。",
 	}, t.deleteSlackMessage)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_channel_info",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.info で単一チャンネルの詳細情報を取得します。",
+		Description: "チャンネルIDから単一チャンネルの詳細を取得します（conversations.info）。IDが既に分かっている場合は、一覧をページングするより先にこれを使ってください。",
 	}, t.getSlackChannelInfo)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_slack_channels",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.list でワークスペース全体のチャンネル一覧を取得します。並び順は取得した結果にローカルで適用します。自分（トークン所有者）が参加しているチャンネルだけが欲しい場合は list_joined_slack_channels を使ってください。",
+		Description: "ワークスペース全体のチャンネル一覧を取得します（conversations.list）。トークン所有者が参加しているチャンネルだけが欲しい場合は list_joined_slack_channels のほうが速く、確実です。並び順は取得結果にローカルで適用します。",
 	}, t.listSlackChannels)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_joined_slack_channels",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API users.conversations でトークン所有者が参加しているチャンネル一覧のみを取得します（サーバー側でメンバーシップに絞り込まれます）。MCP_SLACK_USER_TOKEN（ユーザートークン）を設定している場合はそのユーザー本人が参加しているチャンネル、ボットトークンのみの場合はそのボットが参加しているチャンネルが対象です。",
+		Description: "トークン所有者が参加しているチャンネルのみを取得します（users.conversations）。絞り込みはSlack側で行われるため、list_slack_channels をローカルで絞り込むより効率的です。「自分が入っているチャンネル」を尋ねられた場合はこちらを使ってください。",
 	}, t.listJoinedSlackChannels)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_channel_history",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.history でチャンネルのメッセージ履歴を取得します。public channel は channels:history、private channel は groups:history スコープが必要です。",
+		Description: "チャンネルのメッセージ履歴を新しい順に取得します（conversations.history）。トップレベルのメッセージのみが対象です。スレッド内の返信を読むには get_slack_thread_replies を使ってください。",
 	}, t.getSlackChannelHistory)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_thread_replies",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API conversations.replies で指定メッセージのスレッド返信を取得します。public channel は channels:history、private channel は groups:history スコープが必要です。",
+		Description: "指定したスレッドの返信を取得します（conversations.replies）。ts にはスレッド親のtsを渡してください（get_slack_channel_history の結果の thread_ts が該当します）。",
 	}, t.getSlackThreadReplies)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_slack_users",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API users.list でワークスペースメンバー一覧を取得します。deleted（deactivate済み）ユーザーはデフォルトで除外されます。要 users:read スコープ。",
+		Description: "ワークスペースメンバーを一覧・検索します（users.list）。deactivate済みユーザーはデフォルトで除外されます。特定の1人を宛先として特定したい場合は、この一覧から選ぶのではなく resolve_slack_user を使ってください。",
 	}, t.listSlackUsers)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "lookup_slack_user_by_email",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API users.lookupByEmail でメールアドレスから単一ユーザーを検索します。要 users:read.email スコープ。",
+		Description: "メールアドレスの完全一致で単一ユーザーを取得します（users.lookupByEmail）。名前で探す場合や、見つからないときに候補も知りたい場合は resolve_slack_user を使ってください。",
 	}, t.lookupSlackUserByEmail)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resolve_slack_user",
-		Description: "name または email から Slack ユーザーを一意に解決します。email が指定された場合は users.lookupByEmail を優先し、無ければ users.list から完全一致→部分一致の順で検索します。候補が複数ある場合は自動選択せず候補一覧を返します（曖昧なまま送信しないでください）。戻り値の mention はそのまま <@U...> 形式でメッセージに埋め込めます。要 users:read（および email 指定時は users:read.email）スコープ。",
+		Description: "name または email から Slack ユーザーを一意に特定します。メンション先を決めるときはこれを使ってください。候補が複数ある場合は自動選択せず status=\"ambiguous\" と候補一覧を返すので、曖昧なまま投稿しないでください。status=\"found\" のときの mention をそのまま本文に埋め込めます。search_truncated=true の場合、not_found は「探した範囲にいなかった」という意味しかありません。",
 	}, t.resolveSlackUser)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_auth_info",
-		Description: "MCP_SLACK_USER_TOKEN または MCP_SLACK_TOKEN を使い、Slack Web API auth.test で現在設定されているトークンの認証情報（team, user, bot_id など）を確認します。OAuthスコープは不要です。",
+		Description: "設定中のトークンがどのワークスペース・ユーザー・Botとして認証されるかを返します（auth.test）。OAuthスコープを必要としないため、他のツールがスコープ不足で失敗するときの切り分けに使えます。",
 	}, t.getSlackAuthInfo)
 }
