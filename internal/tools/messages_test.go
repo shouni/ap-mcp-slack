@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 // TestPostSlackMessageWithoutConfirmReturnsPreview pins the confirm gate on the

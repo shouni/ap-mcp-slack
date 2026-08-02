@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"ap-mcp-slack/internal/config"
+	"github.com/shouni/ap-mcp-slack/internal/config"
 )
 
 // TestNewContainerWiresConfigIntoTheClient checks the wiring that decides which tools

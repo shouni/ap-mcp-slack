@@ -10,6 +10,8 @@ Slack Incoming Webhook と Slack Web API で投稿・削除するためのMCPサ
 
 MCPクライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
 
+---
+
 ## 提供ツール
 
 特に断りがない限り、以下のツールは Web API 経由で動作し、`MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN`（未設定時は `MCP_SLACK_BOT_TOKEN`）を使用します。
@@ -36,6 +38,8 @@ Slackを変更するツール（`post_slack_message` / `post_slack_message_as_us
 
 各ツールの入力フィールド詳細・必要なOAuthスコープは [docs/tools.md](docs/tools.md) を参照してください。
 
+---
+
 ## プロジェクトレイアウト (Project Layout)
 
 ```text
@@ -49,21 +53,43 @@ ap-mcp-slack/
     └── server/          # MCP stdio サーバー
 ```
 
-## ビルド
+---
+
+## インストール / ビルド
+
+`go install` で直接インストールできます。バイナリは `$(go env GOPATH)/bin/ap-mcp-slack` に置かれます。
+
+```bash
+go install github.com/shouni/ap-mcp-slack@latest
+```
+
+リポジトリを clone して手元でビルドする場合は以下です。
 
 ```bash
 go build -o ./bin/ap-mcp-slack .
 ```
 
-MCPクライアント側のログにバージョンを表示させたい場合は、ビルド時に埋め込めます（省略時は `dev`）。
+バージョンは MCP クライアントの初期化時にサーバー名とともに報告され、クライアント側のログでどのビルドと話しているかの識別に使われます。何もしなくてもビルド方法に応じて以下が自動で入ります。
+
+| ビルド方法 | 報告されるバージョン |
+| --- | --- |
+| `go install ...@v1.2.3` | `v1.2.3` |
+| リポジトリ内で `go build` | `v1.0.1-0.20260802190324-af39274744ae`（未コミットの変更があれば `+dirty`） |
+| `go run` / `go test` / `-buildvcs=false` | `dev` |
+
+擬似バージョンではなく `git describe` の短い表記にしたい場合は、ビルド時に埋め込めます。`-ldflags` を指定した場合はそちらが優先されます。
 
 ```bash
-go build -ldflags "-X ap-mcp-slack/internal/server.Version=$(git describe --tags --always)" -o ./bin/ap-mcp-slack .
+go build -ldflags "-X github.com/shouni/ap-mcp-slack/internal/server.Version=$(git describe --tags --always)" -o ./bin/ap-mcp-slack .
 ```
+
+---
 
 ## MCPクライアントへの登録例
 
 stdio transport に対応したMCPクライアントであれば、Codex 以外（Claude Code、Claude Desktop など）からも同じバイナリをそのまま起動できます。
+
+以下の例では clone してビルドした `/path/to/ap-mcp-slack/bin/ap-mcp-slack` を指定しています。`go install` した場合は `$(go env GOPATH)/bin/ap-mcp-slack` に読み替えてください。
 
 ### Claude Code
 
@@ -102,6 +128,8 @@ MCP_SLACK_USER_TOKEN = "xoxp-..."
 MCP_SLACK_CHANNEL_ID = "C0123456789"
 ```
 
+---
+
 ## ローカル確認
 
 stdio MCPサーバーなので、通常のHTTPサーバーのようにポートは開きません。手元で起動確認する場合は以下のように実行できますが、起動後はMCPクライアントからのJSON-RPC入力を待ちます。
@@ -112,6 +140,8 @@ export MCP_SLACK_USER_TOKEN="xoxp-..."
 export MCP_SLACK_CHANNEL_ID="C0123456789"
 go run .
 ```
+
+---
 
 ## 環境変数
 
@@ -128,6 +158,8 @@ go run .
 
 必要な Slack トークンスコープは [docs/tools.md](docs/tools.md#必要な-slack-トークンスコープ) を参照してください。
 
+---
+
 ## 主な依存関係 (Dependencies)
 
 | パッケージ | 説明 |
@@ -136,6 +168,8 @@ go run .
 | [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / users.list / users.lookupByEmail / auth.test） |
 | [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | Webhook投稿用のHTTPクライアント（リトライ制御・SSRF/DNS Rebinding対策） |
 
-## ライセンス
+---
 
-MIT License
+## 📜 ライセンス (License)
+
+このプロジェクトは [MIT License](https://opensource.org/licenses/MIT) の下で公開されています。

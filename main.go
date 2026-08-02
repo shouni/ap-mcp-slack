@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"ap-mcp-slack/internal/app"
-	"ap-mcp-slack/internal/config"
-	"ap-mcp-slack/internal/server"
+	"github.com/shouni/ap-mcp-slack/internal/app"
+	"github.com/shouni/ap-mcp-slack/internal/config"
+	"github.com/shouni/ap-mcp-slack/internal/server"
 )
 
 func main() {
