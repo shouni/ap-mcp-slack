@@ -13,7 +13,7 @@ Key dependencies (see `go.mod` / README.md):
 
 ## Module
 
-- Module path: `ap-mcp-slack`
+- Module path: `github.com/shouni/ap-mcp-slack`
 - Go version: 1.26 (see `go.mod`)
 
 ## Architecture
