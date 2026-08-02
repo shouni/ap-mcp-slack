@@ -69,7 +69,15 @@ go install github.com/shouni/ap-mcp-slack@latest
 go build -o ./bin/ap-mcp-slack .
 ```
 
-MCPクライアント側のログにバージョンを表示させたい場合は、ビルド時に埋め込めます（省略時は `dev`）。`go install` では埋め込まれないため、バージョンを出したい場合はこちらを使ってください。
+バージョンは MCP クライアントの初期化時にサーバー名とともに報告され、クライアント側のログでどのビルドと話しているかの識別に使われます。何もしなくてもビルド方法に応じて以下が自動で入ります。
+
+| ビルド方法 | 報告されるバージョン |
+| --- | --- |
+| `go install ...@v1.2.3` | `v1.2.3` |
+| リポジトリ内で `go build` | `v1.0.1-0.20260802190324-af39274744ae`（未コミットの変更があれば `+dirty`） |
+| `go run` / `go test` / `-buildvcs=false` | `dev` |
+
+擬似バージョンではなく `git describe` の短い表記にしたい場合は、ビルド時に埋め込めます。`-ldflags` を指定した場合はそちらが優先されます。
 
 ```bash
 go build -ldflags "-X github.com/shouni/ap-mcp-slack/internal/server.Version=$(git describe --tags --always)" -o ./bin/ap-mcp-slack .
@@ -132,6 +140,8 @@ export MCP_SLACK_USER_TOKEN="xoxp-..."
 export MCP_SLACK_CHANNEL_ID="C0123456789"
 go run .
 ```
+
+---
 
 ## 環境変数
 
