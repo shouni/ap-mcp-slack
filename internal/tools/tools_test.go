@@ -8,7 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 // newTestSession registers SlackTools built from cfg on a real in-process MCP

@@ -5,7 +5,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 // GetSlackAuthInfoInput is the input for get_slack_auth_info. It takes no fields.

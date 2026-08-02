@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 func TestListSlackUsers(t *testing.T) {

@@ -6,16 +6,17 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/app"
-	"ap-mcp-slack/internal/tools"
+	"github.com/shouni/ap-mcp-slack/internal/app"
+	"github.com/shouni/ap-mcp-slack/internal/tools"
 )
 
 // Version is reported to the MCP client during initialization. Override it at build
 // time so a client's logs identify which build it is talking to:
 //
-//	go build -ldflags "-X ap-mcp-slack/internal/server.Version=$(git describe --tags --always)"
+//	go build -ldflags "-X github.com/shouni/ap-mcp-slack/internal/server.Version=$(git describe --tags --always)"
 //
-// It stays "dev" for plain `go build` and `go test`.
+// It stays "dev" for plain `go build`, `go test`, and `go install` — -X is the only
+// thing that sets it.
 var Version = "dev"
 
 // Server is an MCP server using stdio transport.

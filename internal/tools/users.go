@@ -5,7 +5,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 // ListSlackUsersInput is the input for list_slack_users.

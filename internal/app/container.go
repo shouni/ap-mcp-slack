@@ -3,8 +3,8 @@
 package app
 
 import (
-	"ap-mcp-slack/internal/client"
-	"ap-mcp-slack/internal/config"
+	"github.com/shouni/ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/config"
 )
 
 // Container holds the clients shared across the server.

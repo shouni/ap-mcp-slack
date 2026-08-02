@@ -1,4 +1,4 @@
-module ap-mcp-slack
+module github.com/shouni/ap-mcp-slack
 
 go 1.26
 

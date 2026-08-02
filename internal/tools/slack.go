@@ -4,7 +4,7 @@ package tools
 import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 // SlackTools provides Slack-related MCP tools.

@@ -3,8 +3,8 @@ package server
 import (
 	"testing"
 
-	"ap-mcp-slack/internal/app"
-	"ap-mcp-slack/internal/client"
+	"github.com/shouni/ap-mcp-slack/internal/app"
+	"github.com/shouni/ap-mcp-slack/internal/client"
 )
 
 func TestNew(t *testing.T) {
