@@ -72,14 +72,14 @@ func TestRegisterGatesToolsByConfiguredTransport(t *testing.T) {
 		{
 			name:    "token only",
 			cfg:     client.SlackClientConfig{Token: "xoxp-test"},
-			want:    []string{"post_slack_message_as_user", "delete_slack_message", "list_slack_users"},
+			want:    []string{"post_slack_message_as_user", "delete_slack_message", "list_slack_users", "search_slack_messages"},
 			notWant: []string{"post_slack_message"},
 		},
 		{
 			name:    "webhook only",
 			cfg:     client.SlackClientConfig{WebhookURL: "https://hooks.slack.com/services/T/B/X"},
 			want:    []string{"post_slack_message"},
-			notWant: []string{"post_slack_message_as_user", "delete_slack_message", "list_slack_users"},
+			notWant: []string{"post_slack_message_as_user", "delete_slack_message", "list_slack_users", "search_slack_messages"},
 		},
 		{
 			name: "both",

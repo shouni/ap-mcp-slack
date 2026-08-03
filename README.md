@@ -31,6 +31,7 @@ Slackを変更するツール（`post_slack_message` / `post_slack_message_as_us
 | `get_slack_channel_info` | `conversations.info` で単一チャンネルの詳細情報を取得 |
 | `get_slack_channel_history` | `conversations.history` でチャンネルのメッセージ履歴を取得 |
 | `get_slack_thread_replies` | `conversations.replies` で指定メッセージのスレッド返信を取得 |
+| `search_slack_messages` | `search.messages` でワークスペース全体を横断全文検索（ユーザートークン + `search:read` が必要） |
 | `list_slack_users` | `users.list` でワークスペースメンバー一覧を取得 |
 | `lookup_slack_user_by_email` | `users.lookupByEmail` でメールアドレスから単一ユーザーを検索 |
 | `resolve_slack_user` | `name` または `email` から Slack ユーザーを一意に解決し、`<@U...>` 形式のmentionを返す |
@@ -165,7 +166,7 @@ go run .
 | パッケージ | 説明 |
 | --- | --- |
 | [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | MCP 公式 Go SDK（stdio トランスポート） |
-| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / users.list / users.lookupByEmail / auth.test） |
+| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / search.messages / users.list / users.lookupByEmail / auth.test） |
 | [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | Webhook投稿用のHTTPクライアント（リトライ制御・SSRF/DNS Rebinding対策） |
 
 ---
