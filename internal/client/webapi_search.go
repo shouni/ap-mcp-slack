@@ -140,13 +140,16 @@ func (w *webAPITransport) SearchMessages(ctx context.Context, opts SearchMessage
 	}
 
 	matches := summarizeSearchMatches(result.Matches, opts.IncludeRawBlocks)
+	// Taken as a whole rather than field by field: SearchMessages embeds both Paging and
+	// Pagination, and each has a Page, so an unqualified result.Page does not compile.
+	paging := result.Paging
 	// Slack echoes the page it served; fall back to the requested one for the empty
 	// paging block it returns when nothing matched, so page never reads as 0.
-	currentPage := result.Paging.Page
+	currentPage := paging.Page
 	if currentPage <= 0 {
 		currentPage = page
 	}
-	pageCount := result.Paging.Pages
+	pageCount := paging.Pages
 	hasMore := currentPage < pageCount
 	nextPage := 0
 	if hasMore {

@@ -120,7 +120,7 @@ func TestSearchMessagesDefaultsToFirstPageByScore(t *testing.T) {
 func TestSearchMessagesFallsBackToBlockText(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"query":"deploy","messages":{"total":1,"paging":{"count":20,"total":1,"page":1,"pages":1},"matches":[
 			{"type":"message","channel":{"id":"C001","name":"general"},"user":"U001","ts":"1700000000.000100","text":"","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"deploy finished"}}],"permalink":"https://example.slack.com/archives/C001/p1700000000000100"}
