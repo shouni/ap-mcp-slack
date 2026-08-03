@@ -95,6 +95,11 @@ func (t *SlackTools) registerWebAPITools(server *mcp.Server) {
 	}, t.getSlackThreadReplies)
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "search_slack_messages",
+		Description: "ワークスペース全体をSlackの検索インデックスで横断全文検索します（search.messages）。チャンネルを指定せずに「どこかで話題に出たはず」を探す場合はこれを使ってください。チャンネルが分かっていて時系列に読みたい場合は get_slack_channel_history のほうが適しています。query にはSlackの検索構文（in: / from: / before: / after: / has:）がそのまま使えます。結果は関連度順で1ページずつ返り、続きは next_page を page に渡します。",
+	}, t.searchSlackMessages)
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_slack_users",
 		Description: "ワークスペースメンバーを一覧・検索します（users.list）。deactivate済みユーザーはデフォルトで除外されます。特定の1人を宛先として特定したい場合は、この一覧から選ぶのではなく resolve_slack_user を使ってください。",
 	}, t.listSlackUsers)

@@ -13,6 +13,8 @@
 | 両方 | すべて |
 | どちらも未設定 | 起動時にエラー終了します |
 
+唯一の例外は `search_slack_messages` です。`search.messages` はユーザートークンでしか呼べませんが、トークン種別は文字列からは確実に判別できないため、Web API 系の他のツールと同じ条件で登録し、Botトークンの場合は Slack の `not_allowed_token_type` をそのまま返します。
+
 これは、MCPクライアント側のモデルが「提示されたツール一覧」から選択するためです。認証情報のないトランスポートのツールを一覧に載せると、モデルがそれを選び、payloadを組み立て、人間にプレビューを承認させたうえで送信時に初めて失敗する、という最悪の順序になります。使えないツールは最初から見せません。
 
 ## プレビューは `confirm` の既定動作です
@@ -196,6 +198,45 @@ Slackのカーソルは「そのページ全体の後ろ」を指すため、ペ
 
 `get_slack_channel_history` / `get_slack_thread_replies` は、public channel には `channels:history`、private channel には `groups:history` スコープが必要です。Botトークンで読む場合、対象チャンネルにbotが参加している必要があります。
 
+## `search_slack_messages`
+
+| フィールド | 必須 | 説明 |
+| --- | :---: | --- |
+| `query` | 必須 | 検索クエリ。Slackの検索構文がそのまま使えます（後述）。 |
+| `limit` | 任意 | 1ページあたりの最大取得件数。省略時は `20`、最大 `100` です。 |
+| `page` | 任意 | 取得するページ番号（1始まり）。省略時は `1`、最大 `100` です。 |
+| `sort` | 任意 | 並び替えの基準。`score`（関連度）または `timestamp`（投稿日時）。省略時は `score`。 |
+| `sort_dir` | 任意 | 並び順。`asc` または `desc`。省略時は `desc`。 |
+| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
+| `include_raw_blocks` | 任意 | `true` の場合、Block Kit blocksとattachmentsの生データも返します。省略時はテキストとして要約されたものだけを返し、トークン消費を抑えます。 |
+
+`get_slack_channel_history` がチャンネル1つの時系列を読むのに対し、こちらはチャンネルを指定せずワークスペース全体をSlackの検索インデックスで横断検索します。チャンネル一覧を取ってそれぞれの履歴を読んで回る方法では、「一覧に載ったチャンネルの、ページングした範囲」しか見ていないため、見つからないことが「ワークスペースに無い」ことの根拠になりません。横断検索が必要な場合はこのツールを使ってください。
+
+### クエリ構文
+
+Slackの検索修飾子がそのまま使えます。絞り込みは検索語を増やすより修飾子で行うほうが精度が上がります。
+
+| 例 | 意味 |
+| --- | --- |
+| `in:#general` | 指定チャンネル内に限定 |
+| `from:@alice` | 指定ユーザーの投稿に限定 |
+| `before:2026-01-31` / `after:2026-01-01` / `on:2026-01-15` | 日付で限定 |
+| `has:link` / `has:reaction` | リンク・リアクションを含む投稿に限定 |
+| `"完全一致フレーズ"` | フレーズ全体の一致 |
+
+### ページングと返却フィールド
+
+カーソルではなくページ番号でのページングです。1回の呼び出しにつき `search.messages` を1回だけ呼び、続きが必要なら応答の `next_page` を次の `page` に渡してください。他の一覧系ツールのようにサーバー側で複数ページを自動で辿ることはしません。結果は関連度順に並んでいるため、後ろのページほど一致が弱くなる（＝呼び出し側が明示的に要求すべきもの）からです。
+
+| フィールド | 説明 |
+| --- | --- |
+| `matches` | ヒットしたメッセージ。`channel_id` / `channel_name` / `is_private` / `user` / `ts` / `text` / `permalink` を含みます。 |
+| `matches[].thread_ts` | ヒットがスレッド返信だった場合の**親メッセージのts**。`get_slack_thread_replies` にそのまま渡せます。Slackの検索結果自体はthread_tsを返さないため、permalinkから復元しています（トップレベル投稿では空です）。 |
+| `total` | ワークスペース全体でのヒット総数。`count`（このページの件数）より通常はるかに大きく、「見ているのが答えそのものか、その一部か」を判断する材料になります。 |
+| `page` / `page_count` / `has_more` / `next_page` | ページ位置と続きの有無。 |
+
+このツールは**ユーザートークン + `search:read`** でのみ利用できます。Botトークンでは Slack 側が `not_allowed_token_type` を返します（空の検索結果ではなくエラーとして返します。「検索が許可されていない」を「1件も無い」として返さないためです）。
+
 ## `list_slack_users` / `lookup_slack_user_by_email` / `resolve_slack_user`
 
 `list_slack_users` の主な入力:
@@ -241,6 +282,7 @@ Slackのカーソルは「そのページ全体の後ろ」を指すため、ペ
 | `groups:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info` で `private_channel` を含める場合（`post_slack_message_as_user` がprivateチャンネル宛の場合も同様） |
 | `channels:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で public channel を読む場合 |
 | `groups:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で private channel を読む場合 |
+| `search:read` | `search_slack_messages`。**ユーザートークン専用**で、Botトークンでは `not_allowed_token_type` になります |
 | `users:read` | `list_slack_users` / `resolve_slack_user`（name検索） / `post_slack_message_as_user` の `mentions` 表示名解決 |
 | `users:read.email` | `lookup_slack_user_by_email` / `resolve_slack_user`（email検索） |
 | （不要） | `get_slack_auth_info` はOAuthスコープを問わずトークンの有効性のみ確認します |

@@ -263,7 +263,7 @@ func summarizeMessages(messages []slackapi.Message, includeRawBlocks bool) []Sla
 			ReplyUsers: message.ReplyUsers,
 		}
 		if strings.TrimSpace(summary.Text) == "" {
-			summary.Text = fallbackMessageText(message)
+			summary.Text = fallbackText(message.Blocks, message.Attachments)
 		}
 		if includeRawBlocks {
 			if len(message.Blocks.BlockSet) > 0 {
@@ -281,17 +281,21 @@ func summarizeMessages(messages []slackapi.Message, includeRawBlocks bool) []Sla
 	return out
 }
 
-// fallbackMessageText produces a best-effort plain-text rendering of a
-// message's blocks/attachments, for the (mostly bot/app) messages that leave
-// the top-level Text field empty and put their content in Block Kit or
+// fallbackText produces a best-effort plain-text rendering of a message's
+// blocks/attachments, for the (mostly bot/app) messages that leave the
+// top-level Text field empty and put their content in Block Kit or
 // attachments instead. This lets summarizeMessages omit the much larger raw
 // blocks/attachments payload by default without losing the message content.
-func fallbackMessageText(message slackapi.Message) string {
+//
+// It takes the blocks and attachments rather than a slackapi.Message because
+// search.messages returns its matches as a different type carrying the same two
+// fields, and a block-only message must not read as empty there either.
+func fallbackText(blocks slackapi.Blocks, attachments []slackapi.Attachment) string {
 	var parts []string
-	if text := blocksPlainText(message.Blocks); text != "" {
+	if text := blocksPlainText(blocks); text != "" {
 		parts = append(parts, text)
 	}
-	if text := attachmentsPlainText(message.Attachments); text != "" {
+	if text := attachmentsPlainText(attachments); text != "" {
 		parts = append(parts, text)
 	}
 	return strings.Join(parts, "\n")
