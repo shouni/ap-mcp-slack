@@ -506,3 +506,42 @@ func TestGetMessageRequiresTokenAndTS(t *testing.T) {
 		t.Fatal("GetMessage() error = nil without a channel, want error")
 	}
 }
+
+// TestGetMessageReportsNonexistentTSAsNotFound pins how a ts that denotes no message
+// at all comes back. conversations.replies answers thread_not_found for it — an API
+// error on the wire, but a definitive "nothing is there", not a failed read. It must
+// surface as a plain miss: as an error, the update/delete preview would downgrade it
+// to "couldn't read it (missing scope?)" and send the caller after the wrong problem.
+func TestGetMessageReportsNonexistentTSAsNotFound(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/conversations.history":
+			// Slack answers a history probe at an arbitrary ts with the nearest older
+			// top-level message, so a nonexistent ts still gets a non-matching message.
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","user":"U001","text":"older message","ts":"1700000000.000100"}],"has_more":false}`))
+		case "/conversations.replies":
+			_, _ = w.Write([]byte(`{"ok":false,"error":"thread_not_found"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	message, truncated, err := client.GetMessage(context.Background(), "C123", "1700000099.000900")
+	if err != nil {
+		t.Fatalf("GetMessage() error = %v, want a plain miss", err)
+	}
+	if message != nil {
+		t.Fatalf("message = %+v, want nil", message)
+	}
+	if truncated {
+		t.Fatal("truncated = true, want false: Slack answered definitively, nothing was given up on")
+	}
+}

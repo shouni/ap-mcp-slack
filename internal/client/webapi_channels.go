@@ -1,9 +1,10 @@
 package client
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	slackapi "github.com/slack-go/slack"
@@ -62,7 +63,12 @@ type ListChannelsResponse struct {
 	Channels   []SlackChannelSummary `json:"channels"`
 	Count      int                   `json:"count"`
 	NextCursor string                `json:"next_cursor,omitempty"`
-	Sort       string                `json:"sort"`
+	// RetryAfterSeconds is set when Slack rate-limited the listing partway through:
+	// Channels is a complete prefix, NextCursor resumes exactly where the walk was cut
+	// off, and Slack asked that no request be made for this many seconds. Zero means
+	// the listing was not rate-limited.
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
+	Sort              string `json:"sort"`
 }
 
 // GetChannelInfoOptions configures Slack conversations.info requests.
@@ -169,7 +175,7 @@ func (w *webAPITransport) listChannels(ctx context.Context, apiMethod string, op
 	}
 	teamID := strings.TrimSpace(opts.TeamID)
 
-	channels, nextCursor, err := collectPages(ctx, apiMethod, limit, channelListPageSize, strings.TrimSpace(opts.Cursor),
+	channels, nextCursor, retryAfter, err := collectPages(ctx, apiMethod, limit, channelListPageSize, strings.TrimSpace(opts.Cursor),
 		func(ctx context.Context, cursor string, requestLimit int) ([]SlackChannelSummary, string, error) {
 			apiChannels, pageCursor, err := fetch(ctx, channelPageParams{
 				Cursor:          cursor,
@@ -190,11 +196,12 @@ func (w *webAPITransport) listChannels(ctx context.Context, apiMethod string, op
 	sortChannels(channels, sortBy)
 
 	return &ListChannelsResponse{
-		OK:         true,
-		Channels:   channels,
-		Count:      len(channels),
-		NextCursor: nextCursor,
-		Sort:       sortBy,
+		OK:                true,
+		Channels:          channels,
+		Count:             len(channels),
+		NextCursor:        nextCursor,
+		RetryAfterSeconds: retryAfterSeconds(retryAfter),
+		Sort:              sortBy,
 	}, nil
 }
 
@@ -276,51 +283,36 @@ func summarizeChannel(channel slackapi.Channel) SlackChannelSummary {
 	}
 }
 
+// sortChannels orders channels in place. Ties always break on ascending ID so the
+// order is deterministic regardless of which sort was asked for.
 func sortChannels(channels []SlackChannelSummary, sortBy string) {
+	var compare func(left, right SlackChannelSummary) int
 	switch sortBy {
 	case ChannelSortNone:
 		return
 	case ChannelSortNameDesc:
-		sort.SliceStable(channels, func(i, j int) bool {
-			return compareChannelName(channels[i], channels[j]) > 0
-		})
+		compare = func(left, right SlackChannelSummary) int {
+			return compareChannelName(right, left)
+		}
 	case ChannelSortCreatedAsc:
-		sort.SliceStable(channels, func(i, j int) bool {
-			if channels[i].Created == channels[j].Created {
-				return channels[i].ID < channels[j].ID
-			}
-			return channels[i].Created < channels[j].Created
-		})
+		compare = func(left, right SlackChannelSummary) int {
+			return cmp.Or(cmp.Compare(left.Created, right.Created), strings.Compare(left.ID, right.ID))
+		}
 	case ChannelSortCreatedDesc:
-		sort.SliceStable(channels, func(i, j int) bool {
-			if channels[i].Created == channels[j].Created {
-				return channels[i].ID < channels[j].ID
-			}
-			return channels[i].Created > channels[j].Created
-		})
+		compare = func(left, right SlackChannelSummary) int {
+			return cmp.Or(cmp.Compare(right.Created, left.Created), strings.Compare(left.ID, right.ID))
+		}
 	default:
-		sort.SliceStable(channels, func(i, j int) bool {
-			return compareChannelName(channels[i], channels[j]) < 0
-		})
+		compare = compareChannelName
 	}
+	slices.SortStableFunc(channels, compare)
 }
 
 func compareChannelName(left SlackChannelSummary, right SlackChannelSummary) int {
-	leftName := channelNameKey(left)
-	rightName := channelNameKey(right)
-	if leftName < rightName {
-		return -1
-	}
-	if leftName > rightName {
-		return 1
-	}
-	if left.ID < right.ID {
-		return -1
-	}
-	if left.ID > right.ID {
-		return 1
-	}
-	return 0
+	return cmp.Or(
+		strings.Compare(channelNameKey(left), channelNameKey(right)),
+		strings.Compare(left.ID, right.ID),
+	)
 }
 
 func channelNameKey(channel SlackChannelSummary) string {

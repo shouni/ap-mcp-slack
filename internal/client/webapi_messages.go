@@ -130,10 +130,10 @@ func (w *webAPITransport) PreviewUpdateWebAPIMessage(msg UpdateWebAPIMessage) (U
 
 // UpdateWebAPIMessage replaces a message's content with Slack Web API chat.update.
 // Only the original poster (the same bot, for a bot token, or the same user, for a
-// user token) can update a message; Slack rejects the request otherwise. As with
-// PostWebAPIMessage, blocks/attachments fully replace the previous content rather
-// than merging with it, and the payload is resolved through
-// PreviewUpdateWebAPIMessage so it matches what a preview would have shown.
+// user token) can update a message; Slack rejects the request otherwise.
+// Text/blocks/attachments fully replace the previous content rather than merging
+// with it, and as with PostWebAPIMessage the payload is resolved through the
+// matching Preview* method so it is byte-for-byte what a preview would have shown.
 func (w *webAPITransport) UpdateWebAPIMessage(ctx context.Context, msg UpdateWebAPIMessage) (*UpdateWebAPIMessageResponse, error) {
 	if err := w.requireToken(); err != nil {
 		return nil, err

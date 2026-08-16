@@ -20,6 +20,18 @@ type ListSlackChannelsInput struct {
 	Sort            string   `json:"sort,omitempty" jsonschema:"取得した結果に適用する返却前の並び順。none, name_asc, name_desc, created_asc, created_desc を指定できます。省略時は name_asc です。"`
 }
 
+// toOptions converts the shared listing input to the client's request options.
+func (in ListSlackChannelsInput) toOptions() client.ListChannelsOptions {
+	return client.ListChannelsOptions{
+		Types:           in.Types,
+		ExcludeArchived: in.ExcludeArchived,
+		Limit:           in.Limit,
+		Cursor:          in.Cursor,
+		TeamID:          in.TeamID,
+		Sort:            in.Sort,
+	}
+}
+
 // ListSlackChannelsOutput is the structured output for list_slack_channels and
 // list_joined_slack_channels.
 type ListSlackChannelsOutput = client.ListChannelsResponse
@@ -63,14 +75,7 @@ type GetSlackThreadRepliesInput struct {
 type GetSlackMessagesOutput = client.ConversationMessagesResponse
 
 func (t *SlackTools) listSlackChannels(ctx context.Context, _ *mcp.CallToolRequest, in ListSlackChannelsInput) (*mcp.CallToolResult, ListSlackChannelsOutput, error) {
-	out, err := t.client.ListChannels(ctx, client.ListChannelsOptions{
-		Types:           in.Types,
-		ExcludeArchived: in.ExcludeArchived,
-		Limit:           in.Limit,
-		Cursor:          in.Cursor,
-		TeamID:          in.TeamID,
-		Sort:            in.Sort,
-	})
+	out, err := t.client.ListChannels(ctx, in.toOptions())
 	if err != nil {
 		return nil, ListSlackChannelsOutput{}, err
 	}
@@ -79,14 +84,7 @@ func (t *SlackTools) listSlackChannels(ctx context.Context, _ *mcp.CallToolReque
 }
 
 func (t *SlackTools) listJoinedSlackChannels(ctx context.Context, _ *mcp.CallToolRequest, in ListSlackChannelsInput) (*mcp.CallToolResult, ListSlackChannelsOutput, error) {
-	out, err := t.client.ListJoinedChannels(ctx, client.ListChannelsOptions{
-		Types:           in.Types,
-		ExcludeArchived: in.ExcludeArchived,
-		Limit:           in.Limit,
-		Cursor:          in.Cursor,
-		TeamID:          in.TeamID,
-		Sort:            in.Sort,
-	})
+	out, err := t.client.ListJoinedChannels(ctx, in.toOptions())
 	if err != nil {
 		return nil, ListSlackChannelsOutput{}, err
 	}

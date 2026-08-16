@@ -37,7 +37,12 @@ func New(container *app.Container) *Server {
 	mcpServer := mcp.NewServer(&mcp.Implementation{
 		Name:    "ap-mcp-slack",
 		Version: resolveVersion(Version, moduleVersion()),
-	}, nil)
+	}, &mcp.ServerOptions{
+		// Instructions reach the model once per session instead of once per tool
+		// description; tools.ServerInstructions carries the cross-tool contract
+		// (confirm gate, default channel, pagination).
+		Instructions: tools.ServerInstructions,
+	})
 
 	tools.NewSlackTools(container.Slack).Register(mcpServer)
 

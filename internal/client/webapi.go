@@ -8,8 +8,9 @@ import (
 	slackapi "github.com/slack-go/slack"
 )
 
-// webAPITransport posts, deletes, and lists messages/channels through the
-// token-authenticated Slack Web API.
+// webAPITransport talks to the token-authenticated Slack Web API: message
+// post/update/delete, channel and message reads, workspace-wide search, user
+// lookups, and auth.test.
 type webAPITransport struct {
 	token            string
 	defaultChannelID string
@@ -39,8 +40,8 @@ func (w *webAPITransport) WebAPIConfigured() bool {
 	return w.token != ""
 }
 
-// requireToken reports an error if no Web API token was configured. All Web API
-// operations (post-as-user, delete, list) need one, so they share this check.
+// requireToken reports an error if no Web API token was configured. Every Web API
+// operation needs one, so they all share this check.
 func (w *webAPITransport) requireToken() error {
 	if w.token == "" {
 		return fmt.Errorf("slack: token is required")

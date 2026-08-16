@@ -58,6 +58,11 @@ type ListUsersResponse struct {
 	Users      []SlackUserSummary `json:"users"`
 	Count      int                `json:"count"`
 	NextCursor string             `json:"next_cursor,omitempty"`
+	// RetryAfterSeconds is set when Slack rate-limited the listing partway through:
+	// Users is a complete prefix, NextCursor resumes exactly where the walk was cut
+	// off, and Slack asked that no request be made for this many seconds. Zero means
+	// the listing was not rate-limited.
+	RetryAfterSeconds int `json:"retry_after_seconds,omitempty"`
 }
 
 // ResolveUserResponse is the result of resolving a Slack user by name or email.
@@ -88,7 +93,7 @@ func (w *webAPITransport) ListUsers(ctx context.Context, opts ListUsersOptions) 
 	}
 
 	query := strings.ToLower(strings.TrimSpace(opts.Query))
-	users, nextCursor, err := collectPages(ctx, "users.list", limit, userListPageSize, strings.TrimSpace(opts.Cursor),
+	users, nextCursor, retryAfter, err := collectPages(ctx, "users.list", limit, userListPageSize, strings.TrimSpace(opts.Cursor),
 		w.fetchUserPage(strings.TrimSpace(opts.TeamID)),
 		func(summary SlackUserSummary) bool {
 			if !opts.IncludeDeleted && summary.Deleted {
@@ -101,10 +106,11 @@ func (w *webAPITransport) ListUsers(ctx context.Context, opts ListUsersOptions) 
 	}
 
 	return &ListUsersResponse{
-		OK:         true,
-		Users:      users,
-		Count:      len(users),
-		NextCursor: nextCursor,
+		OK:                true,
+		Users:             users,
+		Count:             len(users),
+		NextCursor:        nextCursor,
+		RetryAfterSeconds: retryAfterSeconds(retryAfter),
 	}, nil
 }
 
@@ -204,10 +210,13 @@ func userNameEquals(user SlackUserSummary, name string) bool {
 }
 
 // collectActiveUsers pages through users.list, excluding deleted users, up to
-// resolveUserSearchCap members. The second result reports whether the cap was reached
-// with more pages still outstanding, i.e. whether the workspace was scanned in full.
+// resolveUserSearchCap members. The second result reports whether the scan stopped
+// with more pages still outstanding — because the cap was reached or because Slack
+// rate-limited the walk — i.e. whether the workspace was scanned in full. The
+// retry-after itself is not surfaced: for name resolution the load-bearing fact is
+// that the scan was partial, which SearchTruncated already carries.
 func (w *webAPITransport) collectActiveUsers(ctx context.Context, teamID string) ([]SlackUserSummary, bool, error) {
-	users, nextCursor, err := collectPages(ctx, "users.list", resolveUserSearchCap, userListPageSize, "",
+	users, nextCursor, _, err := collectPages(ctx, "users.list", resolveUserSearchCap, userListPageSize, "",
 		w.fetchUserPage(strings.TrimSpace(teamID)),
 		func(summary SlackUserSummary) bool {
 			return !summary.Deleted

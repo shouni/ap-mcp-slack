@@ -579,3 +579,83 @@ func TestResolveMentionsRequiresToken(t *testing.T) {
 		t.Fatal("ResolveMentions() error = nil, want token error")
 	}
 }
+
+// TestListUsersReturnsPartialOnRateLimit mirrors the channel-listing contract on the
+// users walk: a mid-walk 429 hands back the members already fetched with the refused
+// page's cursor and Slack's retry-after, instead of discarding them as an error.
+func TestListUsersReturnsPartialOnRateLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		switch r.Form.Get("cursor") {
+		case "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U001","name":"alpha"}],"response_metadata":{"next_cursor":"cursor-2"}}`))
+		case "cursor-2":
+			w.Header().Set("Retry-After", "12")
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			t.Fatalf("unexpected cursor %q", r.Form.Get("cursor"))
+		}
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListUsers(context.Background(), ListUsersOptions{})
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v, want the fetched pages back", err)
+	}
+	if resp.Count != 1 || resp.Users[0].ID != "U001" {
+		t.Fatalf("response = %+v, want the one user fetched before the rate limit", resp)
+	}
+	if resp.NextCursor != "cursor-2" || resp.RetryAfterSeconds != 12 {
+		t.Fatalf("next_cursor = %q retry_after_seconds = %d, want cursor-2 and 12", resp.NextCursor, resp.RetryAfterSeconds)
+	}
+}
+
+// TestResolveUserByNameReportsTruncationOnRateLimit pins that a rate-limited name
+// scan degrades exactly like a capped one: the part that was searched is used, and
+// search_truncated marks the answer as covering only that part. Reporting the 429 as
+// an error instead would make resolution flaky under load for no safety gain, and
+// omitting the flag would pass off a partial scan as a definitive not_found.
+func TestResolveUserByNameReportsTruncationOnRateLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		switch r.Form.Get("cursor") {
+		case "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"members":[{"id":"U001","name":"alpha"}],"response_metadata":{"next_cursor":"cursor-2"}}`))
+		case "cursor-2":
+			w.Header().Set("Retry-After", "12")
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			t.Fatalf("unexpected cursor %q", r.Form.Get("cursor"))
+		}
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ResolveUser(context.Background(), "bob", "", "")
+	if err != nil {
+		t.Fatalf("ResolveUser() error = %v, want a truncated not_found", err)
+	}
+	if resp.Status != ResolveUserStatusNotFound {
+		t.Fatalf("status = %q, want %q", resp.Status, ResolveUserStatusNotFound)
+	}
+	if !resp.SearchTruncated {
+		t.Fatal("search_truncated = false, want true: the rate limit stopped the scan early")
+	}
+}
