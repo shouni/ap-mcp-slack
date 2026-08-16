@@ -6,7 +6,7 @@
 [![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/shouni/ap-mcp-slack)](https://github.com/shouni/ap-mcp-slack/tags)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Slack Incoming Webhook と Slack Web API で投稿・削除するためのMCPサーバーです。
+Slack へのメッセージ投稿・更新・削除に加え、チャンネル・履歴・スレッドの読み取り、ワークスペース横断検索、ユーザー解決までをツールとして提供するMCPサーバーです。Slack Incoming Webhook と Slack Web API の2系統のトランスポートに対応します。
 
 MCPクライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
 
@@ -14,18 +14,20 @@ MCPクライアントからコマンドとして起動され、stdin/stdout の 
 
 ## 提供ツール
 
-特に断りがない限り、以下のツールは Web API 経由で動作し、`MCP_SLACK_USER_TOKEN` または `MCP_SLACK_TOKEN`（未設定時は `MCP_SLACK_BOT_TOKEN`）を使用します。
+特に断りがない限り、以下のツールは Web API 経由で動作し、設定されたトークンを `MCP_SLACK_USER_TOKEN` → `MCP_SLACK_TOKEN` → `MCP_SLACK_BOT_TOKEN` の優先順で使用します。
 
 ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。トークンのみを設定した環境では Webhook 系のツール（`post_slack_message`）は一覧に現れず、その逆も同様です。
 
-Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて `confirm` ゲートを持ちます。`confirm` を省略/`false` にした場合は**Slackに一切触れず**、実際に送信される payload をプレビューとして返します。プレビュー専用の別ツールは意図的に用意していません（プレビューはツールを飛ばして到達できる別経路ではなく、既定の動作です）。
+Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて `confirm` ゲートを持ちます。実際にSlackへ書き込むのは `confirm=true` を指定したときだけで、`confirm` を省略/`false` にした場合は**Slackに一切触れず**、実際に送信される payload をプレビューとして返します。プレビュー専用の別ツールは意図的に用意していません（プレビューはツールを飛ばして到達できる別経路ではなく、既定の動作です）。
+
+すべてのツールはMCPの tool annotations（`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`）とタイトルを宣言しています。読み取り専用ツールの自動許可といったMCPクライアント側の権限制御が、ツール名の推測ではなく宣言に基づいて機能します。また `confirm` ゲートの手順（プレビュー → 人間の確認 → `confirm=true` で再実行）は、サーバーの instructions として initialize 時にクライアントへ一度だけ通知されます。
 
 | ツール名 | 説明 |
 | --- | --- |
-| `post_slack_message` | `confirm=true` の場合のみ `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿。`confirm` を省略/`false` にした場合は投稿せずプレビューのみ返す |
-| `post_slack_message_as_user` | `confirm=true` の場合のみ `chat.postMessage` で投稿し、`channel_id` と `ts` を返す。`confirm` を省略/`false` にした場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返す |
-| `update_slack_message` | `confirm=true` の場合のみ `chat.update` で投稿済みメッセージの内容を更新。`confirm` を省略/`false` にした場合は更新せず、更新前の内容と更新後の payload を並べたプレビューのみ返す |
-| `delete_slack_message` | `confirm=true` の場合のみ `chat.delete` で投稿済みメッセージを削除。`confirm` を省略/`false` にした場合は削除せず、削除対象メッセージの内容をプレビューとして返す |
+| `post_slack_message` | `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿 |
+| `post_slack_message_as_user` | `chat.postMessage` でトークン所有者本人として投稿し、`channel_id` と `ts` を返す。プレビューはチャンネル名・メンション先・スレッド元メッセージを解決して表示 |
+| `update_slack_message` | `chat.update` で投稿済みメッセージの内容を丸ごと置き換え。プレビューは更新前の内容と更新後の payload を並べて表示 |
+| `delete_slack_message` | `chat.delete` でメッセージを削除（取り消し不可）。プレビューは削除対象メッセージの内容を表示 |
 | `list_slack_channels` | `conversations.list` でワークスペース全体のチャンネル一覧を取得 |
 | `list_joined_slack_channels` | `users.conversations` でトークン所有者が参加しているチャンネルのみを取得 |
 | `get_slack_channel_info` | `conversations.info` で単一チャンネルの詳細情報を取得 |
@@ -75,7 +77,7 @@ go build -o ./bin/ap-mcp-slack .
 | ビルド方法 | 報告されるバージョン |
 | --- | --- |
 | `go install ...@v1.2.3` | `v1.2.3` |
-| リポジトリ内で `go build` | `v1.0.1-0.20260802190324-af39274744ae`（未コミットの変更があれば `+dirty`） |
+| リポジトリ内で `go build` | VCS由来の擬似バージョン（例: `v1.0.1-0.20260802190324-af39274744ae`。未コミットの変更があれば `+dirty`） |
 | `go run` / `go test` / `-buildvcs=false` | `dev` |
 
 擬似バージョンではなく `git describe` の短い表記にしたい場合は、ビルド時に埋め込めます。`-ldflags` を指定した場合はそちらが優先されます。
@@ -149,10 +151,10 @@ go run .
 | 環境変数 | 必須 | 説明 |
 | --- | :---: | --- |
 | `MCP_SLACK_WEBHOOK_URL` | いずれか必須 | Slack Incoming Webhook URL。Webhook投稿ツールを使う場合に必要。 |
-| `MCP_SLACK_USER_TOKEN` | いずれか必須 | Slack Web API用のユーザートークン。本人として投稿・削除する場合に指定。 |
+| `MCP_SLACK_USER_TOKEN` | いずれか必須 | Slack Web API用のユーザートークン。トークン所有者本人としてSlackを操作する場合に指定（`search_slack_messages` はユーザートークン必須）。 |
 | `MCP_SLACK_TOKEN` | いずれか必須 | Slack Web API用の汎用トークン。`MCP_SLACK_USER_TOKEN` が未指定の場合に利用。 |
 | `MCP_SLACK_BOT_TOKEN` | いずれか必須 | Slack Web API用のBotトークン。上記2つが未指定の場合に利用。 |
-| `MCP_SLACK_CHANNEL_ID` | 任意 | Web API投稿・削除のデフォルトチャンネルID。ツール入力の `channel_id` で上書き可能。 |
+| `MCP_SLACK_CHANNEL_ID` | 任意 | Web API 系ツールで `channel_id` を省略したときに使われるデフォルトチャンネルID。 |
 | `MCP_SLACK_SOURCE_LABEL` | 任意 | `post_slack_message` / `post_slack_message_as_user` / `update_slack_message` の payload 末尾に付与する投稿元ラベル。Block Kitのcontextブロックとして自動付与されます。未設定時は `ap-mcp-slack (MCP) 経由`。 |
 
 `MCP_SLACK_WEBHOOK_URL` とトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN` のいずれか）は、少なくとも一方を設定してください。どちらも未設定の場合、登録できるツールが1つも無くなるため、サーバーは起動時にエラー終了します（正常に接続したうえでツールを1つも提示しない、という分かりにくい状態を避けるためです）。
@@ -166,7 +168,7 @@ go run .
 | パッケージ | 説明 |
 | --- | --- |
 | [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | MCP 公式 Go SDK（stdio トランスポート） |
-| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / search.messages / users.list / users.lookupByEmail / auth.test） |
+| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / search.messages / users.list / users.info / users.lookupByEmail / auth.test） |
 | [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | Webhook投稿用のHTTPクライアント（リトライ制御・SSRF/DNS Rebinding対策） |
 
 ---

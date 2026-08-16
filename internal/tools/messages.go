@@ -275,9 +275,8 @@ func (t *SlackTools) resolveTarget(ctx context.Context, channelID, ts string) (r
 }
 
 // postSlackMessage previews the webhook payload unconditionally, then only actually
-// sends it (via client.PostMessage) when in.Confirm is set. This guarantees callers
-// always see what would be posted before it happens, without a separate preview tool
-// they might skip.
+// sends it (via client.PostMessage) when in.Confirm is set. Why previewing is a mode
+// of this tool rather than a tool of its own is explained on Register.
 func (t *SlackTools) postSlackMessage(ctx context.Context, _ *mcp.CallToolRequest, in PostSlackMessageInput) (*mcp.CallToolResult, PostSlackMessageOutput, error) {
 	if err := in.validate(); err != nil {
 		return nil, PostSlackMessageOutput{}, err
@@ -360,9 +359,8 @@ func (t *SlackTools) buildWebAPIPreview(ctx context.Context, in PostSlackMessage
 
 // postSlackMessageAsUser previews the chat.postMessage payload unconditionally
 // (resolving channel name, mentions, and thread parent), then only actually sends it
-// (via client.PostWebAPIMessage) when in.Confirm is set. This guarantees callers always
-// see what would be posted, and who it would notify, before it happens, without a
-// separate preview tool they might skip.
+// (via client.PostWebAPIMessage) when in.Confirm is set, so callers always see what
+// would be posted — and who it would notify — before it happens.
 func (t *SlackTools) postSlackMessageAsUser(ctx context.Context, _ *mcp.CallToolRequest, in PostSlackMessageAsUserInput) (*mcp.CallToolResult, PostSlackMessageAsUserOutput, error) {
 	out, err := t.buildWebAPIPreview(ctx, in)
 	if err != nil {

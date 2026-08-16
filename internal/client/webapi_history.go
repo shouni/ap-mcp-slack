@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -179,7 +180,9 @@ func (w *webAPITransport) GetConversationReplies(ctx context.Context, opts Conve
 //
 // A message that simply isn't there is reported as (nil, false, nil) rather than an
 // error, since "no such message" is a legitimate answer the caller should see rather
-// than a failure. API errors are returned as-is and left for the caller to downgrade:
+// than a failure — and conversations.replies' thread_not_found is exactly that
+// answer wearing an error's clothes, so it is translated into the same plain miss.
+// Other API errors are returned as-is and left for the caller to downgrade:
 // chat.update and chat.delete need no history scope, so a token that can delete but
 // not read must still be able to delete.
 func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) (message *SlackMessageSummary, searchTruncated bool, err error) {
@@ -217,6 +220,11 @@ func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) 
 			Limit:     messageSearchPageSize,
 		})
 		if err != nil {
+			// Slack's definitive "nothing exists at ts", not a failed read — translated
+			// into the plain miss the doc comment describes.
+			if isThreadNotFoundError(err) {
+				return nil, false, nil
+			}
 			// Prefer the history error when both calls failed: history is the call that
 			// covers ordinary channel messages, so its failure is the more informative one.
 			if historyErr != nil {
@@ -233,6 +241,14 @@ func (w *webAPITransport) GetMessage(ctx context.Context, channelID, ts string) 
 		}
 	}
 	return nil, true, nil
+}
+
+// isThreadNotFoundError reports whether err is Slack's thread_not_found error, which
+// conversations.replies returns when no message — top-level or reply — exists at the
+// requested ts.
+func isThreadNotFoundError(err error) bool {
+	slackErr, ok := errors.AsType[slackapi.SlackErrorResponse](err)
+	return ok && slackErr.Err == "thread_not_found"
 }
 
 // findMessageByTS returns the message whose ts is exactly ts, or nil. It returns a

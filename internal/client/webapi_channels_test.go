@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -405,5 +406,74 @@ func TestGetChannelInfoRequiresTokenAndChannel(t *testing.T) {
 	client = NewSlackClientWithConfig(SlackClientConfig{Token: "xoxp-test"})
 	if _, err := client.GetChannelInfo(context.Background(), GetChannelInfoOptions{}); err == nil {
 		t.Fatal("GetChannelInfo() error = nil, want channel error")
+	}
+}
+
+// TestListChannelsReturnsPartialOnRateLimit pins what a mid-walk HTTP 429 turns into:
+// the pages already fetched, the cursor of the very page Slack refused, and Slack's
+// retry-after — not an error. Failing would discard fetched pages only for the retry
+// to re-spend the request budget that just ran out, and the cursor guarantees the
+// refused page is re-fetched rather than skipped.
+func TestListChannelsReturnsPartialOnRateLimit(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("parse form: %v", err)
+		}
+		switch r.Form.Get("cursor") {
+		case "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true,"channels":[{"id":"C001","name":"alpha","is_channel":true}],"response_metadata":{"next_cursor":"cursor-2"}}`))
+		case "cursor-2":
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusTooManyRequests)
+		default:
+			t.Fatalf("unexpected cursor %q", r.Form.Get("cursor"))
+		}
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	resp, err := client.ListChannels(context.Background(), ListChannelsOptions{})
+	if err != nil {
+		t.Fatalf("ListChannels() error = %v, want the fetched pages back", err)
+	}
+	if resp.Count != 1 || resp.Channels[0].ID != "C001" {
+		t.Fatalf("response = %+v, want the one channel fetched before the rate limit", resp)
+	}
+	if resp.NextCursor != "cursor-2" {
+		t.Fatalf("next_cursor = %q, want cursor-2 so the refused page is re-fetched, not skipped", resp.NextCursor)
+	}
+	if resp.RetryAfterSeconds != 30 {
+		t.Fatalf("retry_after_seconds = %d, want 30 from Slack's Retry-After", resp.RetryAfterSeconds)
+	}
+}
+
+// TestListChannelsFirstPageRateLimitIsError pins the other half of the rate-limit
+// contract: with nothing fetched yet there is no partial result worth returning, so
+// the 429 surfaces as an error whose message carries Slack's retry-after.
+func TestListChannelsFirstPageRateLimitIsError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := NewSlackClientWithConfig(SlackClientConfig{
+		Token:      "xoxp-test",
+		APIBaseURL: server.URL,
+	})
+	_, err := client.ListChannels(context.Background(), ListChannelsOptions{})
+	if err == nil {
+		t.Fatal("ListChannels() error = nil, want a rate-limit error")
+	}
+	if !strings.Contains(err.Error(), "retry after") {
+		t.Fatalf("error = %v, want Slack's retry-after in the message", err)
 	}
 }

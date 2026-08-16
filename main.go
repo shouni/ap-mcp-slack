@@ -20,8 +20,9 @@ func main() {
 	}
 }
 
-// run はサーバーの初期化と起動を行います。defer によるクリーンアップが
-// os.Exit で無視されないよう、終了コードの決定は main 側に委ねます。
+// run initializes and runs the server. It returns the error rather than calling
+// os.Exit itself, so its deferred cleanup is not skipped; deciding the exit code is
+// left to main.
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
