@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestPostWebAPIMessage(t *testing.T) {
@@ -161,27 +162,28 @@ func TestSentBlocksMatchPreviewedBlocks(t *testing.T) {
 				if marshalErr != nil {
 					t.Fatalf("%s: marshal previewed blocks: %v", method, marshalErr)
 				}
-				if !jsonEqual(t, sentBlocks, string(wantBlocks)) {
-					t.Fatalf("%s: sent blocks = %s, want the previewed blocks %s", method, sentBlocks, wantBlocks)
+				if diff := jsonDiff(t, string(wantBlocks), sentBlocks); diff != "" {
+					t.Fatalf("%s: sent blocks differ from the previewed blocks (-want +got):\n%s", method, diff)
 				}
 			}
 		})
 	}
 }
 
-// jsonEqual reports whether left and right decode to the same JSON value, so block
-// comparisons ignore key ordering, which neither Slack nor the encoders preserve.
-func jsonEqual(t *testing.T, left, right string) bool {
+// jsonDiff reports the difference between want and got as decoded JSON values (empty when
+// they match), so block comparisons ignore key ordering, which neither Slack nor the
+// encoders preserve, and a mismatch points at the field instead of printing both blobs.
+func jsonDiff(t *testing.T, want, got string) string {
 	t.Helper()
 
-	var leftValue, rightValue any
-	if err := json.Unmarshal([]byte(left), &leftValue); err != nil {
-		t.Fatalf("unmarshal %q: %v", left, err)
+	var wantValue, gotValue any
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("unmarshal %q: %v", want, err)
 	}
-	if err := json.Unmarshal([]byte(right), &rightValue); err != nil {
-		t.Fatalf("unmarshal %q: %v", right, err)
+	if err := json.Unmarshal([]byte(got), &gotValue); err != nil {
+		t.Fatalf("unmarshal %q: %v", got, err)
 	}
-	return reflect.DeepEqual(leftValue, rightValue)
+	return cmp.Diff(wantValue, gotValue)
 }
 
 func TestPostWebAPIMessageReturnsSlackError(t *testing.T) {
