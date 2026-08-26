@@ -1,24 +1,24 @@
 module github.com/shouni/ap-mcp-slack
 
-go 1.26
+go 1.27
 
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
-	github.com/shouni/go-http-kit v1.8.3
+	github.com/shouni/go-http-kit v1.9.0
 	github.com/slack-go/slack v0.29.0
 )
 
 require (
-	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
+	github.com/cenkalti/backoff/v7 v7.0.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
-	github.com/shouni/netarmor v1.2.2 // indirect
+	github.com/shouni/netarmor v1.3.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
