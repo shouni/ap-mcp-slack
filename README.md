@@ -2,10 +2,11 @@
 
 [![CI](https://github.com/shouni/ap-mcp-slack/actions/workflows/ci.yml/badge.svg)](https://github.com/shouni/ap-mcp-slack/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen)](#)
-[![Language](https://img.shields.io/badge/Language-Go-blue)](https://golang.org/)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/shouni/ap-mcp-slack)](https://golang.org/)
-[![GitHub tag (latest by date)](https://img.shields.io/github/v/tag/shouni/ap-mcp-slack)](https://github.com/shouni/ap-mcp-slack/tags)
+[![Language](https://img.shields.io/badge/Language-Go-blue)](https://go.dev/)
+[![Platform](https://img.shields.io/badge/Platform-MCP%20stdio-blue)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+## 🚀 概要 (About) - サーバーを建てずに stdio で動く Slack の MCP
 
 Slack へのメッセージ投稿・更新・削除に加え、チャンネル・履歴・スレッドの読み取り、ワークスペース横断検索、ユーザー解決までをツールとして提供するMCPサーバーです。Slack Incoming Webhook と Slack Web API の2系統のトランスポートに対応します。
 
