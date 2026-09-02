@@ -32,7 +32,7 @@ func newTestWebhookClientWithSourceLabel(webhookURL, sourceLabel string) *SlackC
 			webhookURL:  webhookURL,
 			sourceLabel: sourceLabel,
 			httpKitClient: httpkit.New(
-				requestTimeout,
+				httpkit.WithTimeout(requestTimeout),
 				httpkit.WithNoRetry(),
 				httpkit.WithUserAgent(webhookUserAgent),
 				httpkit.WithoutBrowserHeaders(),

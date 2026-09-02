@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/shouni/go-http-kit/httpkit"
@@ -40,7 +39,7 @@ func newWebhookTransport(cfg SlackClientConfig) webhookTransport {
 		webhookURL:  strings.TrimSpace(cfg.WebhookURL),
 		sourceLabel: strings.TrimSpace(cfg.SourceLabel),
 		httpKitClient: httpkit.New(
-			requestTimeout,
+			httpkit.WithTimeout(requestTimeout),
 			httpkit.WithNoRetry(),
 			httpkit.WithUserAgent(webhookUserAgent),
 			httpkit.WithoutBrowserHeaders(),
@@ -97,16 +96,13 @@ func (w *webhookTransport) PostMessage(ctx context.Context, msg Message) (*PostM
 		return nil, err
 	}
 
-	responseBody, err := w.httpKitClient.PostJSONAndFetchBytes(ctx, w.webhookURL, msg)
+	res, err := w.httpKitClient.PostJSON(ctx, w.webhookURL, msg)
 	if err != nil {
 		return nil, fmt.Errorf("slack: post webhook: %w", err)
 	}
 
-	// go-http-kit's PostJSONAndFetchBytes abstracts away the exact 2xx status code
-	// (it only surfaces non-2xx as an error), and Slack's incoming webhooks are
-	// documented to respond 200 on every accepted post, so that's what we report here.
 	return &PostMessageResponse{
-		StatusCode: http.StatusOK,
-		Body:       strings.TrimSpace(string(responseBody)),
+		StatusCode: res.Status,
+		Body:       strings.TrimSpace(string(res.Body)),
 	}, nil
 }
