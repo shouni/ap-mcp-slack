@@ -9,6 +9,9 @@ import (
 	"github.com/shouni/go-http-kit/httpkit"
 )
 
+// webhookUserAgent is how this server identifies itself to Slack's webhook endpoint.
+const webhookUserAgent = "ap-mcp-slack"
+
 // webhookTransport posts messages through Slack Incoming Webhooks.
 //
 // Response bodies are capped by go-http-kit itself (httpkit.MaxResponseBodySize, a
@@ -26,10 +29,22 @@ func newWebhookTransport(cfg SlackClientConfig) webhookTransport {
 	// validation always stays on here; tests that need a loopback httptest server
 	// build a webhookTransport literal directly rather than going through this
 	// production constructor, so there's no config flag that could flip it off.
+	//
+	// The identity options are what stop go-http-kit's helpers from introducing
+	// themselves as a browser. Its defaults exist for scraping sites that block
+	// non-browser agents: PostJSONAndFetchBytes runs every request through
+	// addCommonHeaders, which sets a Chrome User-Agent plus the sec-ch-ua client
+	// hints. Slack's webhook endpoint is an API and asks for none of that, so we
+	// name the program instead and drop the hints.
 	return webhookTransport{
-		webhookURL:    strings.TrimSpace(cfg.WebhookURL),
-		sourceLabel:   strings.TrimSpace(cfg.SourceLabel),
-		httpKitClient: httpkit.New(requestTimeout, httpkit.WithNoRetry()),
+		webhookURL:  strings.TrimSpace(cfg.WebhookURL),
+		sourceLabel: strings.TrimSpace(cfg.SourceLabel),
+		httpKitClient: httpkit.New(
+			requestTimeout,
+			httpkit.WithNoRetry(),
+			httpkit.WithUserAgent(webhookUserAgent),
+			httpkit.WithoutBrowserHeaders(),
+		),
 	}
 }
 
