@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/shouni/go-http-kit v1.12.0
+	github.com/shouni/go-http-kit v1.13.0
 	github.com/slack-go/slack v0.29.0
 )
 
