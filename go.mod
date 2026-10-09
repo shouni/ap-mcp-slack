@@ -5,12 +5,12 @@ go 1.27
 require (
 	github.com/google/go-cmp v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/shouni/go-http-kit v1.13.0
+	github.com/shouni/go-http-kit v1.13.1
 	github.com/slack-go/slack v0.30.1
 )
 
 require (
-	github.com/cenkalti/backoff/v7 v7.0.0 // indirect
+	github.com/cenkalti/backoff/v7 v7.0.1 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
