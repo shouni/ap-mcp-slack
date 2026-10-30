@@ -6,7 +6,7 @@ require (
 	github.com/google/go-cmp v0.7.0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/shouni/go-http-kit v1.13.3
-	github.com/slack-go/slack v0.30.1
+	github.com/slack-go/slack v0.31.0
 )
 
 require (
