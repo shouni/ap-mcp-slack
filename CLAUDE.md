@@ -35,5 +35,5 @@ Tool descriptions in `tools/slack.go` say what a tool does and how to choose bet
 
 - Comments, doc comments, error/log/panic messages and test assertion messages are English (moved 2026-11-10; do not mix Japanese back in). Error strings follow Go style: lowercase, no trailing punctuation (ST1005).
 - MCP tool titles, tool descriptions, parameter descriptions (`jsonschema` tags), `tools.ServerInstructions` and the preview notes (`targetNote*`) are English too: they are the server's public interface.
-- Japanese stays only as data: the default source label `ap-mcp-slack (MCP) 経由` posted to Slack (`config.defaultSlackSourceLabel`) and the test fixtures that use it. Some table-test case names in `server_test.go` are still Japanese.
+- Japanese stays only as data: the default source label `ap-mcp-slack (MCP) 経由` posted to Slack (`config.defaultSlackSourceLabel`) and the test fixtures that use it. Test function and subtest names (`t.Run` names and table `name` fields) are English too.
 - `README.md` is English and `README.ja.md` is its Japanese version; update the two together. `docs/tools.md` is English.

@@ -34,13 +34,13 @@ func TestResolveVersion(t *testing.T) {
 		module   string
 		want     string
 	}{
-		{"どちらも無ければ既定値", defaultVersion, "", defaultVersion},
-		{"go install はタグをそのまま報告する", defaultVersion, "v1.2.3", "v1.2.3"},
-		{"リポジトリ内の go build は擬似バージョンを報告する",
+		{"default when neither is set", defaultVersion, "", defaultVersion},
+		{"go install reports the tag as is", defaultVersion, "v1.2.3", "v1.2.3"},
+		{"go build in the repo reports the pseudo-version",
 			defaultVersion, "v1.0.1-0.20260802190324-af39274744ae+dirty", "v1.0.1-0.20260802190324-af39274744ae+dirty"},
-		{"テストや -buildvcs=false の (devel) は採用しない", defaultVersion, "(devel)", defaultVersion},
-		{"-ldflags があればそれを使う", "v1.2.3-4-gabcdef", "", "v1.2.3-4-gabcdef"},
-		{"-ldflags は擬似バージョンより優先する",
+		{"ignores (devel) from tests or -buildvcs=false", defaultVersion, "(devel)", defaultVersion},
+		{"uses -ldflags when set", "v1.2.3-4-gabcdef", "", "v1.2.3-4-gabcdef"},
+		{"-ldflags wins over the pseudo-version",
 			"v1.2.3-4-gabcdef", "v1.0.1-0.20260802190324-af39274744ae+dirty", "v1.2.3-4-gabcdef"},
 	}
 
