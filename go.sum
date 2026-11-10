@@ -20,8 +20,8 @@ github.com/shouni/go-http-kit v1.13.4 h1:0ewD66VbHiZK1GUlVjuopmjwRHWMG7FvN2XjfET
 github.com/shouni/go-http-kit v1.13.4/go.mod h1:ft20DV3mNC6BtDZ8dkSg8jc9DHAltDhQgi66XdD9+1E=
 github.com/shouni/netarmor v1.4.3 h1:/FiL5H7XeheFE3+PPI2l5Ne38mmSW9oDWbMBJ0RcoIk=
 github.com/shouni/netarmor v1.4.3/go.mod h1:BeqmhJtYfJ4bw0OpT5pu4HUXHkHHY6y5Wu0BDjsyr28=
-github.com/slack-go/slack v0.33.0 h1:9pEEf1KbdlydQKuro3pyUcq6mVR6Ozwy1dOOn/GgK2I=
-github.com/slack-go/slack v0.33.0/go.mod h1:ph5iUlM1bUhqOeRynzryiWfkv6vVElt5JbhXbhtApsI=
+github.com/slack-go/slack v0.35.0 h1:lxUmPzkYYlSHLMNdmgvtdzGFnKAJiApA5gZiMcGEYiw=
+github.com/slack-go/slack v0.35.0/go.mod h1:swfK2lWHa2StZ3TXdUdK9sBzcC+oDXpW+jsHd5PoPRM=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
