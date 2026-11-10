@@ -13,7 +13,7 @@ import (
 // and how to continue paginated results — so the per-tool descriptions can stay
 // about choosing between tools. Like those descriptions, it names no environment
 // variables: configuration is the operator's side of the contract, not the model's.
-const ServerInstructions = `Slackへ書き込むツール（投稿・更新・削除）は、confirm を省略すると実行されず、実際に送信・変更される内容のプレビューだけを返します。まず confirm なしで呼び出し、プレビューを利用者に確認してもらってから、同じ入力に confirm=true を付けて再実行してください。プレビューの payload は確定時に送信されるものと完全に一致します。channel_id を省略した場合はサーバーに設定された既定チャンネルが使われ、未設定ならエラーになります。一覧・履歴系ツールは next_cursor（横断検索は next_page）が返ったときだけ続きがあり、retry_after_seconds が付いている場合はその秒数待ってから続きを取得してください。`
+const ServerInstructions = `Tools that write to Slack (post, update, delete) do nothing when confirm is omitted and return only a preview of exactly what would be sent or changed. Call them first without confirm, have the user check the preview, then rerun the same input with confirm=true. The preview's payload is exactly what is sent on confirmation. When channel_id is omitted, the default channel configured on the server is used, and if none is configured it is an error. Listing and history tools have more results only when next_cursor (next_page for workspace-wide search) is returned; when retry_after_seconds is present, wait that many seconds before fetching the rest.`
 
 // SlackTools provides Slack-related MCP tools.
 type SlackTools struct {
@@ -83,8 +83,8 @@ func (t *SlackTools) Register(server *mcp.Server) {
 func (t *SlackTools) registerWebhookTools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message",
-		Title:       "Slack投稿（Webhook）",
-		Description: "MCP_SLACK_WEBHOOK_URL の Slack Incoming Webhook にメッセージを投稿します。confirm=false（省略時）は投稿せず、送信される payload のプレビューのみを返します。",
+		Title:       "Post to Slack (webhook)",
+		Description: "Posts a message to the Slack Incoming Webhook at MCP_SLACK_WEBHOOK_URL. With confirm=false (the default), nothing is posted and only a preview of the payload to be sent is returned.",
 		Annotations: additiveWriteAnnotations(),
 	}, t.postSlackMessage)
 }
@@ -99,92 +99,92 @@ func (t *SlackTools) registerWebhookTools(server *mcp.Server) {
 func (t *SlackTools) registerWebAPITools(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "post_slack_message_as_user",
-		Title:       "Slack投稿（本人名義）",
-		Description: "Slackにメッセージを投稿します（chat.postMessage）。トークン所有者本人の名前で投稿されます。confirm=false（省略時）は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューを返します。投稿時は channel_id と ts を返し、ts は update_slack_message / delete_slack_message にそのまま渡せます。",
+		Title:       "Post to Slack (as the user)",
+		Description: "Posts a message to Slack (chat.postMessage), in the token owner's own name. With confirm=false (the default), nothing is posted and a preview with the channel name, mentioned users and thread parent message resolved is returned. When posted, it returns channel_id and ts, and ts can be passed to update_slack_message / delete_slack_message as is.",
 		Annotations: additiveWriteAnnotations(),
 	}, t.postSlackMessageAsUser)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "update_slack_message",
-		Title:       "Slackメッセージ更新",
-		Description: "投稿済みメッセージの内容を書き換えます（chat.update）。書き換えられるのは元の投稿者本人の投稿のみで、text/blocks/attachments は既存の内容を丸ごと置き換えます（部分更新はできません）。confirm=false（省略時）は更新せず、現在の本文と更新後の payload を並べたプレビューを返します。",
+		Title:       "Update Slack message",
+		Description: "Rewrites the content of a posted message (chat.update). Only the original poster's own messages can be rewritten, and text/blocks/attachments replace the existing content wholesale (no partial updates). With confirm=false (the default), nothing is updated and a preview showing the current body next to the updated payload is returned.",
 		Annotations: destructiveWriteAnnotations(),
 	}, t.updateSlackMessage)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "delete_slack_message",
-		Title:       "Slackメッセージ削除",
-		Description: "メッセージを削除します（chat.delete）。削除は取り消せません。confirm=false（省略時）は削除せず、削除対象メッセージの内容をプレビューとして返します。",
+		Title:       "Delete Slack message",
+		Description: "Deletes a message (chat.delete). Deletion cannot be undone. With confirm=false (the default), nothing is deleted and the content of the target message is returned as a preview.",
 		Annotations: destructiveWriteAnnotations(),
 	}, t.deleteSlackMessage)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_channel_info",
-		Title:       "チャンネル詳細取得",
-		Description: "チャンネルIDから単一チャンネルの詳細を取得します（conversations.info）。IDが既に分かっている場合は、一覧をページングするより先にこれを使ってください。",
+		Title:       "Get channel info",
+		Description: "Fetches the details of a single channel from its channel ID (conversations.info). When the ID is already known, use this before paging through a listing.",
 		Annotations: readOnlyAnnotations(),
 	}, t.getSlackChannelInfo)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_slack_channels",
-		Title:       "チャンネル一覧",
-		Description: "ワークスペース全体のチャンネル一覧を取得します（conversations.list）。トークン所有者が参加しているチャンネルだけが欲しい場合は list_joined_slack_channels のほうが速く、確実です。並び順は取得結果にローカルで適用します。",
+		Title:       "List channels",
+		Description: "Lists the channels of the whole workspace (conversations.list). When only the channels the token owner has joined are wanted, list_joined_slack_channels is faster and more reliable. The order is applied locally to the fetched results.",
 		Annotations: readOnlyAnnotations(),
 	}, t.listSlackChannels)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_joined_slack_channels",
-		Title:       "参加チャンネル一覧",
-		Description: "トークン所有者が参加しているチャンネルのみを取得します（users.conversations）。絞り込みはSlack側で行われるため、list_slack_channels をローカルで絞り込むより効率的です。「自分が入っているチャンネル」を尋ねられた場合はこちらを使ってください。",
+		Title:       "List joined channels",
+		Description: "Lists only the channels the token owner has joined (users.conversations). The filtering is done on Slack's side, so it is more efficient than filtering list_slack_channels locally. Use this when asked for \"the channels I am in\".",
 		Annotations: readOnlyAnnotations(),
 	}, t.listJoinedSlackChannels)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_channel_history",
-		Title:       "チャンネル履歴取得",
-		Description: "チャンネルのメッセージ履歴を新しい順に取得します（conversations.history）。トップレベルのメッセージのみが対象です。スレッド内の返信を読むには get_slack_thread_replies を使ってください。",
+		Title:       "Get channel history",
+		Description: "Fetches a channel's message history, newest first (conversations.history). Only top-level messages are included. To read replies in a thread, use get_slack_thread_replies.",
 		Annotations: readOnlyAnnotations(),
 	}, t.getSlackChannelHistory)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_thread_replies",
-		Title:       "スレッド返信取得",
-		Description: "指定したスレッドの返信を取得します（conversations.replies）。ts にはスレッド親のtsを渡してください（get_slack_channel_history の結果の thread_ts が該当します）。",
+		Title:       "Get thread replies",
+		Description: "Fetches the replies of the given thread (conversations.replies). Pass the thread parent's ts as ts (the thread_ts in get_slack_channel_history results is that value).",
 		Annotations: readOnlyAnnotations(),
 	}, t.getSlackThreadReplies)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "search_slack_messages",
-		Title:       "メッセージ横断検索",
-		Description: "ワークスペース全体をSlackの検索インデックスで横断全文検索します（search.messages）。チャンネルを指定せずに「どこかで話題に出たはず」を探す場合はこれを使ってください。チャンネルが分かっていて時系列に読みたい場合は get_slack_channel_history のほうが適しています。query にはSlackの検索構文（in: / from: / before: / after: / has:）がそのまま使えます。結果は関連度順で1ページずつ返り、続きは next_page を page に渡します。",
+		Title:       "Search messages",
+		Description: "Full-text search across the whole workspace through Slack's search index (search.messages). Use this to find something that \"must have come up somewhere\" without naming a channel. When the channel is known and you want to read it in order, get_slack_channel_history fits better. Slack's search syntax (in: / from: / before: / after: / has:) works as is in query. Results come back one page at a time, ordered by relevance; to continue, pass next_page as page.",
 		Annotations: readOnlyAnnotations(),
 	}, t.searchSlackMessages)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "list_slack_users",
-		Title:       "ユーザー一覧・検索",
-		Description: "ワークスペースメンバーを一覧・検索します（users.list）。deactivate済みユーザーはデフォルトで除外されます。特定の1人を宛先として特定したい場合は、この一覧から選ぶのではなく resolve_slack_user を使ってください。",
+		Title:       "List and search users",
+		Description: "Lists and searches workspace members (users.list). Deactivated users are excluded by default. To pin down one specific person as a recipient, use resolve_slack_user rather than picking from this list.",
 		Annotations: readOnlyAnnotations(),
 	}, t.listSlackUsers)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "lookup_slack_user_by_email",
-		Title:       "メールでユーザー特定",
-		Description: "メールアドレスの完全一致で単一ユーザーを取得します（users.lookupByEmail）。名前で探す場合や、見つからないときに候補も知りたい場合は resolve_slack_user を使ってください。",
+		Title:       "Look up user by email",
+		Description: "Fetches a single user by exact email address match (users.lookupByEmail). To search by name, or to get candidates when nothing is found, use resolve_slack_user.",
 		Annotations: readOnlyAnnotations(),
 	}, t.lookupSlackUserByEmail)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "resolve_slack_user",
-		Title:       "ユーザー解決",
-		Description: "name または email から Slack ユーザーを一意に特定します。メンション先を決めるときはこれを使ってください。候補が複数ある場合は自動選択せず status=\"ambiguous\" と候補一覧を返すので、曖昧なまま投稿しないでください。status=\"found\" のときの mention をそのまま本文に埋め込めます。search_truncated=true の場合、not_found は「探した範囲にいなかった」という意味しかありません。",
+		Title:       "Resolve user",
+		Description: "Uniquely identifies a Slack user from name or email. Use this when deciding whom to mention. With several candidates it does not pick one automatically and returns status=\"ambiguous\" with the candidates, so do not post while it is still ambiguous. With status=\"found\", the mention can be embedded in the body as is. When search_truncated=true, not_found only means \"not within the range that was searched\".",
 		Annotations: readOnlyAnnotations(),
 	}, t.resolveSlackUser)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_slack_auth_info",
-		Title:       "認証情報確認",
-		Description: "設定中のトークンがどのワークスペース・ユーザー・Botとして認証されるかを返します（auth.test）。OAuthスコープを必要としないため、他のツールがスコープ不足で失敗するときの切り分けに使えます。",
+		Title:       "Check auth info",
+		Description: "Returns which workspace, user and bot the configured token authenticates as (auth.test). It needs no OAuth scope, so it helps isolate the problem when other tools fail for missing scopes.",
 		Annotations: readOnlyAnnotations(),
 	}, t.getSlackAuthInfo)
 }

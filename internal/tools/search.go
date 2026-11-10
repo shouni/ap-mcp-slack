@@ -10,13 +10,13 @@ import (
 
 // SearchSlackMessagesInput is the input for search_slack_messages.
 type SearchSlackMessagesInput struct {
-	Query            string `json:"query" jsonschema:"検索クエリ。Slackの検索構文がそのまま使えます: in:#channel / from:@user / before:2026-01-31 / after:2026-01-01 / during:January / has:link / \"完全一致フレーズ\"。複数語はAND、絞り込みは検索語より修飾子で行うほうが精度が上がります。"`
-	Limit            int    `json:"limit,omitempty" jsonschema:"1ページあたりの最大取得件数。省略時は20、最大100です。"`
-	Page             int    `json:"page,omitempty" jsonschema:"取得するページ番号。1始まりで、省略時は1、最大100です。続きは前回の応答の next_page を渡してください。"`
-	Sort             string `json:"sort,omitempty" jsonschema:"並び替えの基準。score（関連度）または timestamp（投稿日時）。省略時は score です。"`
-	SortDirection    string `json:"sort_dir,omitempty" jsonschema:"並び順。asc または desc。省略時は desc です。"`
-	TeamID           string `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。"`
-	IncludeRawBlocks bool   `json:"include_raw_blocks,omitempty" jsonschema:"trueの場合、Block Kit blocksとattachmentsの生データも返します。省略時はテキストとして要約されたものだけを返します。"`
+	Query            string `json:"query" jsonschema:"The search query. Slack's search syntax works as is: in:#channel / from:@user / before:2026-01-31 / after:2026-01-01 / during:January / has:link / \"exact phrase\". Multiple terms are ANDed; narrowing with modifiers is more precise than adding search terms."`
+	Limit            int    `json:"limit,omitempty" jsonschema:"The maximum number of items per page. Defaults to 20, at most 100."`
+	Page             int    `json:"page,omitempty" jsonschema:"The page number to fetch. 1-based; defaults to 1, at most 100. To continue, pass the next_page of the previous response."`
+	Sort             string `json:"sort,omitempty" jsonschema:"The sort key: score (relevance) or timestamp (posting time). Defaults to score."`
+	SortDirection    string `json:"sort_dir,omitempty" jsonschema:"The sort direction: asc or desc. Defaults to desc."`
+	TeamID           string `json:"team_id,omitempty" jsonschema:"The team id naming the target workspace when using an Enterprise Grid org-level token."`
+	IncludeRawBlocks bool   `json:"include_raw_blocks,omitempty" jsonschema:"When true, the raw Block Kit blocks and attachments are returned too. By default only the text summary is returned."`
 }
 
 // SearchSlackMessagesOutput is the structured output for search_slack_messages.

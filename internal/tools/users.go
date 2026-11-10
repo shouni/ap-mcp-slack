@@ -10,11 +10,11 @@ import (
 
 // ListSlackUsersInput is the input for list_slack_users.
 type ListSlackUsersInput struct {
-	Query          string `json:"query,omitempty" jsonschema:"name / real_name / display_name / email に対する部分一致検索クエリ（大文字小文字を区別しません）。"`
-	Limit          int    `json:"limit,omitempty" jsonschema:"最大取得件数。省略時は200、最大1000です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります。"`
-	Cursor         string `json:"cursor,omitempty" jsonschema:"続きから取得する場合のSlack pagination cursorです。"`
-	TeamID         string `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。"`
-	IncludeDeleted bool   `json:"include_deleted,omitempty" jsonschema:"trueの場合、deactivate済み(deleted)ユーザーも含めます。省略時は除外されます。"`
+	Query          string `json:"query,omitempty" jsonschema:"A case-insensitive substring search query over name / real_name / display_name / email."`
+	Limit          int    `json:"limit,omitempty" jsonschema:"The maximum number of items. Defaults to 200, at most 1000. Because of the remainder of what Slack returns in one page, the number returned can slightly exceed it."`
+	Cursor         string `json:"cursor,omitempty" jsonschema:"The Slack pagination cursor to continue from."`
+	TeamID         string `json:"team_id,omitempty" jsonschema:"The team id naming the target workspace when using an Enterprise Grid org-level token."`
+	IncludeDeleted bool   `json:"include_deleted,omitempty" jsonschema:"When true, deactivated (deleted) users are included too. Excluded by default."`
 }
 
 // ListSlackUsersOutput is the structured output for list_slack_users.
@@ -22,7 +22,7 @@ type ListSlackUsersOutput = client.ListUsersResponse
 
 // LookupSlackUserByEmailInput is the input for lookup_slack_user_by_email.
 type LookupSlackUserByEmailInput struct {
-	Email string `json:"email" jsonschema:"検索対象のメールアドレス。"`
+	Email string `json:"email" jsonschema:"The email address to look up."`
 }
 
 // LookupSlackUserByEmailOutput is the structured output for lookup_slack_user_by_email.
@@ -33,9 +33,9 @@ type LookupSlackUserByEmailOutput struct {
 
 // ResolveSlackUserInput is the input for resolve_slack_user.
 type ResolveSlackUserInput struct {
-	Name   string `json:"name,omitempty" jsonschema:"検索対象のユーザー名・real name・display nameのいずれか。emailが指定された場合は無視されます。"`
-	Email  string `json:"email,omitempty" jsonschema:"検索対象のメールアドレス。指定された場合はnameより優先されます。"`
-	TeamID string `json:"team_id,omitempty" jsonschema:"Enterprise Gridのorg-level tokenで対象ワークスペースを指定する場合のteam idです。nameでの検索時のみ利用します。"`
+	Name   string `json:"name,omitempty" jsonschema:"The user name, real name or display name to look up. Ignored when email is given."`
+	Email  string `json:"email,omitempty" jsonschema:"The email address to look up. Takes precedence over name when given."`
+	TeamID string `json:"team_id,omitempty" jsonschema:"The team id naming the target workspace when using an Enterprise Grid org-level token. Used only when searching by name."`
 }
 
 // ResolveSlackUserOutput is the structured output for resolve_slack_user. Status is

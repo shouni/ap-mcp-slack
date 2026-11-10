@@ -6,83 +6,85 @@
 [![Platform](https://img.shields.io/badge/Platform-MCP%20stdio-blue)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🚀 概要 (About) - サーバーを建てずに stdio で動く Slack の MCP
+English | [日本語](README.ja.md)
 
-Slack へのメッセージ投稿・更新・削除に加え、チャンネル・履歴・スレッドの読み取り、ワークスペース横断検索、ユーザー解決までをツールとして提供するMCPサーバーです。Slack Incoming Webhook と Slack Web API の2系統のトランスポートに対応します。
+## 🚀 About - a Slack MCP server over stdio, with no server to host
 
-MCPクライアントからコマンドとして起動され、stdin/stdout の stdio transport で通信します。ローカルホストのHTTPサーバーやCloud Runデプロイは不要です。
+An MCP server that provides, as tools, posting, updating and deleting Slack messages, plus reading channels, history and threads, workspace-wide search, and user resolution. It supports two transports: Slack Incoming Webhook and the Slack Web API.
+
+It is launched as a command by the MCP client and communicates over the stdio transport on stdin/stdout. No localhost HTTP server or Cloud Run deployment is needed.
 
 ---
 
-## 提供ツール
+## Tools
 
-特に断りがない限り、以下のツールは Web API 経由で動作し、設定されたトークンを `MCP_SLACK_USER_TOKEN` → `MCP_SLACK_TOKEN` → `MCP_SLACK_BOT_TOKEN` の優先順で使用します。
+Unless noted otherwise, the tools below go through the Web API and use the configured token in the order of precedence `MCP_SLACK_USER_TOKEN` → `MCP_SLACK_TOKEN` → `MCP_SLACK_BOT_TOKEN`.
 
-ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。トークンのみを設定した環境では Webhook 系のツール（`post_slack_message`）は一覧に現れず、その逆も同様です。
+A tool is registered only when the credentials for its transport are configured. In an environment with only a token, the webhook tool (`post_slack_message`) does not appear in the list, and vice versa.
 
-Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて `confirm` ゲートを持ちます。実際にSlackへ書き込むのは `confirm=true` を指定したときだけで、`confirm` を省略/`false` にした場合は**Slackに一切触れず**、実際に送信される payload をプレビューとして返します。プレビュー専用の別ツールは意図的に用意していません（プレビューはツールを飛ばして到達できる別経路ではなく、既定の動作です）。
+Every tool that changes Slack (`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`) has a `confirm` gate. It actually writes to Slack only with `confirm=true`; with `confirm` omitted or `false` it **does not touch Slack at all** and returns the payload that would actually be sent as a preview. There is deliberately no separate preview-only tool (the preview is not a separate route that can be reached by skipping a tool; it is the default behaviour).
 
-すべてのツールはMCPの tool annotations（`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`）とタイトルを宣言しています。読み取り専用ツールの自動許可といったMCPクライアント側の権限制御が、ツール名の推測ではなく宣言に基づいて機能します。また `confirm` ゲートの手順（プレビュー → 人間の確認 → `confirm=true` で再実行）は、サーバーの instructions として initialize 時にクライアントへ一度だけ通知されます。
+Every tool declares MCP tool annotations (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`) and a title. Permission controls on the MCP client side, such as auto-approving read-only tools, work from these declarations rather than from guessing at tool names. The `confirm` gate procedure (preview → human check → rerun with `confirm=true`) is sent to the client once, at initialize, as the server's instructions.
 
-| ツール名 | 説明 |
+| Tool | Description |
 | --- | --- |
-| `post_slack_message` | `MCP_SLACK_WEBHOOK_URL` の Slack Incoming Webhook にメッセージを投稿 |
-| `post_slack_message_as_user` | `chat.postMessage` でトークン所有者本人として投稿し、`channel_id` と `ts` を返す。プレビューはチャンネル名・メンション先・スレッド元メッセージを解決して表示 |
-| `update_slack_message` | `chat.update` で投稿済みメッセージの内容を丸ごと置き換え。プレビューは更新前の内容と更新後の payload を並べて表示 |
-| `delete_slack_message` | `chat.delete` でメッセージを削除（取り消し不可）。プレビューは削除対象メッセージの内容を表示 |
-| `list_slack_channels` | `conversations.list` でワークスペース全体のチャンネル一覧を取得 |
-| `list_joined_slack_channels` | `users.conversations` でトークン所有者が参加しているチャンネルのみを取得 |
-| `get_slack_channel_info` | `conversations.info` で単一チャンネルの詳細情報を取得 |
-| `get_slack_channel_history` | `conversations.history` でチャンネルのメッセージ履歴を取得 |
-| `get_slack_thread_replies` | `conversations.replies` で指定メッセージのスレッド返信を取得 |
-| `search_slack_messages` | `search.messages` でワークスペース全体を横断全文検索（ユーザートークン + `search:read` が必要） |
-| `list_slack_users` | `users.list` でワークスペースメンバー一覧を取得 |
-| `lookup_slack_user_by_email` | `users.lookupByEmail` でメールアドレスから単一ユーザーを検索 |
-| `resolve_slack_user` | `name` または `email` から Slack ユーザーを一意に解決し、`<@U...>` 形式のmentionを返す |
-| `get_slack_auth_info` | `auth.test` で現在のトークンの認証情報（team/user/bot_idなど）を確認。OAuthスコープ不要 |
+| `post_slack_message` | Posts a message to the Slack Incoming Webhook at `MCP_SLACK_WEBHOOK_URL` |
+| `post_slack_message_as_user` | Posts as the token owner through `chat.postMessage` and returns `channel_id` and `ts`. The preview resolves and shows the channel name, mentioned users and thread parent message |
+| `update_slack_message` | Replaces the whole content of a posted message through `chat.update`. The preview shows the content before the update next to the updated payload |
+| `delete_slack_message` | Deletes a message through `chat.delete` (irreversible). The preview shows the content of the message to be deleted |
+| `list_slack_channels` | Lists the channels of the whole workspace through `conversations.list` |
+| `list_joined_slack_channels` | Lists only the channels the token owner has joined, through `users.conversations` |
+| `get_slack_channel_info` | Fetches the details of a single channel through `conversations.info` |
+| `get_slack_channel_history` | Fetches a channel's message history through `conversations.history` |
+| `get_slack_thread_replies` | Fetches the thread replies to a given message through `conversations.replies` |
+| `search_slack_messages` | Full-text search across the whole workspace through `search.messages` (needs a user token + `search:read`) |
+| `list_slack_users` | Lists workspace members through `users.list` |
+| `lookup_slack_user_by_email` | Looks up a single user by email address through `users.lookupByEmail` |
+| `resolve_slack_user` | Resolves a single Slack user from `name` or `email` and returns a mention in `<@U...>` form |
+| `get_slack_auth_info` | Shows the current token's identity (team/user/bot_id, etc.) through `auth.test`. No OAuth scope needed |
 
-各ツールの入力フィールド詳細・必要なOAuthスコープは [docs/tools.md](docs/tools.md) を参照してください。
+For each tool's input fields and the OAuth scopes it needs, see [docs/tools.md](docs/tools.md).
 
 ---
 
-## プロジェクトレイアウト (Project Layout)
+## Project Layout
 
 ```text
 ap-mcp-slack/
-├── main.go              # エントリーポイント
+├── main.go              # Entry point
 └── internal/
-    ├── config/          # 環境変数ロード
-    ├── app/             # DI コンテナ（SlackClient・設定の集約）
-    ├── client/          # Slack Incoming Webhook / Web API クライアント
-    ├── tools/           # MCPツール定義
-    └── server/          # MCP stdio サーバー
+    ├── config/          # Environment variable loading
+    ├── app/             # DI container (gathers SlackClient and settings)
+    ├── client/          # Slack Incoming Webhook / Web API client
+    ├── tools/           # MCP tool definitions
+    └── server/          # MCP stdio server
 ```
 
 ---
 
-## インストール / ビルド
+## Install / Build
 
-`go install` で直接インストールできます。バイナリは `$(go env GOPATH)/bin/ap-mcp-slack` に置かれます。
+It can be installed directly with `go install`. The binary is placed at `$(go env GOPATH)/bin/ap-mcp-slack`.
 
 ```bash
 go install github.com/shouni/ap-mcp-slack@latest
 ```
 
-リポジトリを clone して手元でビルドする場合は以下です。
+To clone the repository and build locally:
 
 ```bash
 go build -o ./bin/ap-mcp-slack .
 ```
 
-バージョンは MCP クライアントの初期化時にサーバー名とともに報告され、クライアント側のログでどのビルドと話しているかの識別に使われます。何もしなくてもビルド方法に応じて以下が自動で入ります。
+The version is reported along with the server name when the MCP client initializes, and is used in the client's logs to identify which build it is talking to. Without doing anything, the following is filled in automatically depending on how it was built.
 
-| ビルド方法 | 報告されるバージョン |
+| How it was built | Reported version |
 | --- | --- |
 | `go install ...@v1.2.3` | `v1.2.3` |
-| リポジトリ内で `go build` | VCS由来の擬似バージョン（例: `v1.0.1-0.20260802190324-af39274744ae`。未コミットの変更があれば `+dirty`） |
+| `go build` inside the repository | A VCS-derived pseudo-version (e.g. `v1.0.1-0.20260802190324-af39274744ae`; `+dirty` if there are uncommitted changes) |
 | `go run` / `go test` / `-buildvcs=false` | `dev` |
 
-擬似バージョンではなく `git describe` の短い表記にしたい場合は、ビルド時に埋め込めます。`-ldflags` を指定した場合はそちらが優先されます。
+If you want the short `git describe` form instead of a pseudo-version, it can be embedded at build time. A value given through `-ldflags` takes precedence.
 
 ```bash
 go build -ldflags "-X github.com/shouni/ap-mcp-slack/internal/server.Version=$(git describe --tags --always)" -o ./bin/ap-mcp-slack .
@@ -90,11 +92,11 @@ go build -ldflags "-X github.com/shouni/ap-mcp-slack/internal/server.Version=$(g
 
 ---
 
-## MCPクライアントへの登録例
+## Registering with an MCP client
 
-stdio transport に対応したMCPクライアントであれば、Codex 以外（Claude Code、Claude Desktop など）からも同じバイナリをそのまま起動できます。
+Any MCP client that supports the stdio transport can launch the same binary as is, not only Codex (Claude Code, Claude Desktop and so on).
 
-以下の例では clone してビルドした `/path/to/ap-mcp-slack/bin/ap-mcp-slack` を指定しています。`go install` した場合は `$(go env GOPATH)/bin/ap-mcp-slack` に読み替えてください。
+The examples below use `/path/to/ap-mcp-slack/bin/ap-mcp-slack`, cloned and built. If you used `go install`, read it as `$(go env GOPATH)/bin/ap-mcp-slack`.
 
 ### Claude Code
 
@@ -108,7 +110,7 @@ claude mcp add ap-mcp-slack \
 
 ### Codex
 
-`~/.codex/config.toml` に登録します。
+Register it in `~/.codex/config.toml`.
 
 ```toml
 [mcp_servers.ap-mcp-slack]
@@ -120,7 +122,7 @@ MCP_SLACK_USER_TOKEN = "xoxp-..."
 MCP_SLACK_CHANNEL_ID = "C0123456789"
 ```
 
-開発中はビルドせずに `go run` で登録することもできます。
+During development it can also be registered with `go run`, without building.
 
 ```toml
 [mcp_servers.ap-mcp-slack]
@@ -135,9 +137,9 @@ MCP_SLACK_CHANNEL_ID = "C0123456789"
 
 ---
 
-## ローカル確認
+## Running locally
 
-stdio MCPサーバーなので、通常のHTTPサーバーのようにポートは開きません。手元で起動確認する場合は以下のように実行できますが、起動後はMCPクライアントからのJSON-RPC入力を待ちます。
+Since this is a stdio MCP server, it does not open a port like an ordinary HTTP server. You can start it by hand as below to check that it launches, but once started it waits for JSON-RPC input from an MCP client.
 
 ```bash
 export MCP_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/XXX/YYY/ZZZ"
@@ -148,33 +150,33 @@ go run .
 
 ---
 
-## 環境変数
+## Environment variables
 
-| 環境変数 | 必須 | 説明 |
+| Variable | Required | Description |
 | --- | :---: | --- |
-| `MCP_SLACK_WEBHOOK_URL` | いずれか必須 | Slack Incoming Webhook URL。Webhook投稿ツールを使う場合に必要。 |
-| `MCP_SLACK_USER_TOKEN` | いずれか必須 | Slack Web API用のユーザートークン。トークン所有者本人としてSlackを操作する場合に指定（`search_slack_messages` はユーザートークン必須）。 |
-| `MCP_SLACK_TOKEN` | いずれか必須 | Slack Web API用の汎用トークン。`MCP_SLACK_USER_TOKEN` が未指定の場合に利用。 |
-| `MCP_SLACK_BOT_TOKEN` | いずれか必須 | Slack Web API用のBotトークン。上記2つが未指定の場合に利用。 |
-| `MCP_SLACK_CHANNEL_ID` | 任意 | Web API 系ツールで `channel_id` を省略したときに使われるデフォルトチャンネルID。 |
-| `MCP_SLACK_SOURCE_LABEL` | 任意 | `post_slack_message` / `post_slack_message_as_user` / `update_slack_message` の payload 末尾に付与する投稿元ラベル。Block Kitのcontextブロックとして自動付与されます。未設定時は `ap-mcp-slack (MCP) 経由`。 |
+| `MCP_SLACK_WEBHOOK_URL` | One of these | The Slack Incoming Webhook URL. Needed to use the webhook posting tool. |
+| `MCP_SLACK_USER_TOKEN` | One of these | A user token for the Slack Web API. Set it to act on Slack as the token owner (`search_slack_messages` requires a user token). |
+| `MCP_SLACK_TOKEN` | One of these | A general-purpose token for the Slack Web API. Used when `MCP_SLACK_USER_TOKEN` is not set. |
+| `MCP_SLACK_BOT_TOKEN` | One of these | A bot token for the Slack Web API. Used when neither of the two above is set. |
+| `MCP_SLACK_CHANNEL_ID` | Optional | The default channel ID used when a Web API tool is called without `channel_id`. |
+| `MCP_SLACK_SOURCE_LABEL` | Optional | The source label appended to the end of the payload of `post_slack_message` / `post_slack_message_as_user` / `update_slack_message`. It is added automatically as a Block Kit context block. Defaults to `ap-mcp-slack (MCP) 経由` ("via ap-mcp-slack (MCP)"). |
 
-`MCP_SLACK_WEBHOOK_URL` とトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN` のいずれか）は、少なくとも一方を設定してください。どちらも未設定の場合、登録できるツールが1つも無くなるため、サーバーは起動時にエラー終了します（正常に接続したうえでツールを1つも提示しない、という分かりにくい状態を避けるためです）。
+Set at least one of `MCP_SLACK_WEBHOOK_URL` and a token (any of `MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`). With neither set there would be no tool to register, so the server exits with an error at startup (to avoid the confusing state of connecting normally and then offering no tools at all).
 
-必要な Slack トークンスコープは [docs/tools.md](docs/tools.md#必要な-slack-トークンスコープ) を参照してください。
+For the Slack token scopes required, see [docs/tools.md](docs/tools.md#required-slack-token-scopes).
 
 ---
 
-## 主な依存関係 (Dependencies)
+## Dependencies
 
-| パッケージ | 説明 |
+| Package | Description |
 | --- | --- |
-| [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | MCP 公式 Go SDK（stdio トランスポート） |
-| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API クライアント（chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / search.messages / users.list / users.info / users.lookupByEmail / auth.test） |
-| [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | Webhook投稿用のHTTPクライアント（リトライ制御・SSRF/DNS Rebinding対策） |
+| [modelcontextprotocol/go-sdk](https://github.com/modelcontextprotocol/go-sdk) | The official MCP Go SDK (stdio transport) |
+| [slack-go/slack](https://github.com/slack-go/slack) | Slack Web API client (chat.postMessage / chat.update / chat.delete / conversations.list / users.conversations / conversations.info / conversations.history / conversations.replies / search.messages / users.list / users.info / users.lookupByEmail / auth.test) |
+| [shouni/go-http-kit](https://github.com/shouni/go-http-kit) | HTTP client for webhook posting (retry control, SSRF/DNS rebinding protection) |
 
 ---
 
-## 📜 ライセンス (License)
+## 📜 License
 
-このプロジェクトは [MIT License](https://opensource.org/licenses/MIT) の下で公開されています。
+This project is released under the [MIT License](https://opensource.org/licenses/MIT).
