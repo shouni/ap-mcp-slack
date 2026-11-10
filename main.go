@@ -29,13 +29,13 @@ func run() error {
 
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("設定の読み込みに失敗しました", "error", err)
+		slog.Error("failed to load config", "error", err)
 		return err
 	}
 
 	srv := server.New(app.NewContainer(cfg))
 	if err := srv.Run(ctx); err != nil {
-		slog.Error("サーバーが異常終了しました", "error", err)
+		slog.Error("server exited abnormally", "error", err)
 		return err
 	}
 	return nil

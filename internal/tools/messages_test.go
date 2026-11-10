@@ -512,7 +512,7 @@ func TestDeleteSlackMessageWithoutChannelReadScope(t *testing.T) {
 	if out.ChannelID != "C123" || out.ChannelName != "" {
 		t.Fatalf("out = %+v, want the raw channel_id and no resolved name", out)
 	}
-	if !strings.Contains(out.TargetNote, "チャンネル名") {
+	if !strings.Contains(out.TargetNote, "channel name") {
 		t.Fatalf("out.TargetNote = %q, want the unresolved-channel warning", out.TargetNote)
 	}
 
@@ -559,7 +559,7 @@ func TestDeleteSlackMessageWithoutChannelReadScopeUsesDefaultChannel(t *testing.
 	if out.ChannelID != "C123" {
 		t.Fatalf("out.ChannelID = %q, want the default channel C123", out.ChannelID)
 	}
-	if !strings.Contains(out.TargetNote, "チャンネル名") {
+	if !strings.Contains(out.TargetNote, "channel name") {
 		t.Fatalf("out.TargetNote = %q, want the unresolved-channel warning", out.TargetNote)
 	}
 }
@@ -592,7 +592,7 @@ func TestUpdateSlackMessageWithoutChannelReadScopeUsesDefaultChannel(t *testing.
 	if out.ChannelID != "C123" || out.Payload.ChannelID != "C123" {
 		t.Fatalf("out = %+v, want the default channel C123 in both the output and the payload", out)
 	}
-	if !strings.Contains(out.CurrentNote, "チャンネル名") {
+	if !strings.Contains(out.CurrentNote, "channel name") {
 		t.Fatalf("out.CurrentNote = %q, want the unresolved-channel warning", out.CurrentNote)
 	}
 }

@@ -15,13 +15,13 @@ import (
 // slightly between the webhook and Web API paths, and channel_id, which only the
 // Web API path accepts).
 type MessageContent struct {
-	Text        string           `json:"text" jsonschema:"Slackに投稿する本文。デフォルトでSlackのmrkdwnとして解釈されます。"`
-	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"任意のSlack Block Kit blocks配列。指定する場合もアクセシビリティ用にtextを含めてください。"`
-	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"任意のSlack attachments配列。"`
-	IconEmoji   string           `json:"icon_emoji,omitempty" jsonschema:"投稿者アイコンとして使うSlack絵文字名。例: :robot_face:"`
-	UnfurlLinks *bool            `json:"unfurl_links,omitempty" jsonschema:"リンク展開を制御します。"`
-	UnfurlMedia *bool            `json:"unfurl_media,omitempty" jsonschema:"メディア展開を制御します。"`
-	Mentions    []string         `json:"mentions,omitempty" jsonschema:"メンション対象のSlackユーザーID配列（例: [\"U0123456\"]）。本文の先頭に <@ID> 形式で追加されます。blocksを指定した場合、本文はフォールバック表示にしか使われないため、blocks内で明示的にメンションしてください。"`
+	Text        string           `json:"text" jsonschema:"The message body to post to Slack. Interpreted as Slack mrkdwn by default."`
+	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"An optional Slack Block Kit blocks array. Include text for accessibility even when specifying it."`
+	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"An optional Slack attachments array."`
+	IconEmoji   string           `json:"icon_emoji,omitempty" jsonschema:"The Slack emoji name to use as the poster's icon. Example: :robot_face:"`
+	UnfurlLinks *bool            `json:"unfurl_links,omitempty" jsonschema:"Controls link unfurling."`
+	UnfurlMedia *bool            `json:"unfurl_media,omitempty" jsonschema:"Controls media unfurling."`
+	Mentions    []string         `json:"mentions,omitempty" jsonschema:"An array of Slack user IDs to mention (e.g. [\"U0123456\"]). Prepended to the body as <@ID>. When blocks is given, the body is used only as the fallback display, so mention them explicitly inside blocks."`
 }
 
 // validate rejects input combinations that would quietly do something other than what
@@ -106,8 +106,8 @@ func mentionPrefix(mentions []string) string {
 // PostSlackMessageInput is the input for post_slack_message.
 type PostSlackMessageInput struct {
 	MessageContent
-	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"スレッド返信にする場合の親メッセージts。Webhook側で利用可能な場合のみ有効です。"`
-	Confirm  bool   `json:"confirm,omitempty" jsonschema:"true にすると実際に投稿します。false（省略時）の場合は投稿せず、投稿内容のプレビューのみを返します。プレビューを確認したうえで confirm=true を指定して再実行してください。"`
+	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"The parent message ts when replying in a thread. Effective only when the webhook supports it."`
+	Confirm  bool   `json:"confirm,omitempty" jsonschema:"true actually posts. When false (the default), nothing is posted and only a preview of the message is returned. Check the preview, then rerun with confirm=true."`
 }
 
 // PostSlackMessageOutput is the structured output for post_slack_message.
@@ -124,10 +124,10 @@ type PostSlackMessageOutput struct {
 
 // PostSlackMessageAsUserInput is the input for post_slack_message_as_user.
 type PostSlackMessageAsUserInput struct {
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"投稿先チャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"The channel ID to post to. Defaults to MCP_SLACK_CHANNEL_ID."`
 	MessageContent
-	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"スレッド返信にする場合の親メッセージts。"`
-	Confirm  bool   `json:"confirm,omitempty" jsonschema:"true にすると実際に投稿します。false（省略時）の場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみを返します。プレビューを確認したうえで confirm=true を指定して再実行してください。"`
+	ThreadTS string `json:"thread_ts,omitempty" jsonschema:"The parent message ts when replying in a thread."`
+	Confirm  bool   `json:"confirm,omitempty" jsonschema:"true actually posts. When false (the default), nothing is posted and only a preview with the channel name, mentioned users and thread parent message resolved is returned. Check the preview, then rerun with confirm=true."`
 }
 
 // PostSlackMessageAsUserOutput is the structured output for post_slack_message_as_user.
@@ -152,12 +152,12 @@ type PostSlackMessageAsUserOutput struct {
 
 // UpdateSlackMessageInput is the input for update_slack_message.
 type UpdateSlackMessageInput struct {
-	ChannelID   string           `json:"channel_id,omitempty" jsonschema:"更新対象のチャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
-	TS          string           `json:"ts" jsonschema:"更新対象メッセージのts。post_slack_message_as_user の戻り値を利用できます。"`
-	Text        string           `json:"text,omitempty" jsonschema:"更新後の本文。blocks または attachments を指定しない場合は必須です。"`
-	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"更新後のSlack Block Kit blocks配列。指定すると既存のblocksを置き換えます。"`
-	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"更新後のSlack attachments配列。指定すると既存のattachmentsを置き換えます。"`
-	Confirm     bool             `json:"confirm,omitempty" jsonschema:"true にすると実際に更新します。false（省略時）の場合は更新せず、更新対象メッセージの現在の内容と更新後の内容を返します。プレビューを確認したうえで confirm=true を指定して再実行してください。"`
+	ChannelID   string           `json:"channel_id,omitempty" jsonschema:"The channel ID of the message to update. Defaults to MCP_SLACK_CHANNEL_ID."`
+	TS          string           `json:"ts" jsonschema:"The ts of the message to update. The return value of post_slack_message_as_user can be used."`
+	Text        string           `json:"text,omitempty" jsonschema:"The new message body. Required unless blocks or attachments is given."`
+	Blocks      []map[string]any `json:"blocks,omitempty" jsonschema:"The new Slack Block Kit blocks array. Replaces the existing blocks when given."`
+	Attachments []map[string]any `json:"attachments,omitempty" jsonschema:"The new Slack attachments array. Replaces the existing attachments when given."`
+	Confirm     bool             `json:"confirm,omitempty" jsonschema:"true actually updates. When false (the default), nothing is updated, and the current content of the target message and the updated content are returned. Check the preview, then rerun with confirm=true."`
 }
 
 // UpdateSlackMessageOutput is the structured output for update_slack_message.
@@ -185,9 +185,9 @@ type UpdateSlackMessageOutput struct {
 
 // DeleteSlackMessageInput is the input for delete_slack_message.
 type DeleteSlackMessageInput struct {
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"削除対象のチャンネルID。省略時は MCP_SLACK_CHANNEL_ID を利用します。"`
-	TS        string `json:"ts" jsonschema:"削除対象メッセージのts。post_slack_message_as_user の戻り値を利用できます。"`
-	Confirm   bool   `json:"confirm,omitempty" jsonschema:"true にすると実際に削除します。false（省略時）の場合は削除せず、削除対象メッセージの内容を返します。削除は取り消せないため、プレビューを確認したうえで confirm=true を指定して再実行してください。"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"The channel ID of the message to delete. Defaults to MCP_SLACK_CHANNEL_ID."`
+	TS        string `json:"ts" jsonschema:"The ts of the message to delete. The return value of post_slack_message_as_user can be used."`
+	Confirm   bool   `json:"confirm,omitempty" jsonschema:"true actually deletes. When false (the default), nothing is deleted and the content of the target message is returned. Deletion cannot be undone, so check the preview, then rerun with confirm=true."`
 }
 
 // DeleteSlackMessageOutput is the structured output for delete_slack_message.
@@ -209,13 +209,13 @@ type DeleteSlackMessageOutput struct {
 // caller is told that the old content is unknown rather than being left to read the
 // missing field as "the message is empty".
 const (
-	targetNoteNotFound    = "対象メッセージが見つかりませんでした。ts とチャンネルを確認してください。"
-	targetNoteUnreadable  = "対象メッセージを取得できませんでした（履歴スコープ不足など）。内容を確認せずに実行することになります。"
-	targetNoteUnnamedChan = "チャンネル名を解決できませんでした（channels:read / groups:read スコープ不足など）。channel_id が意図した宛先か確認してください。"
+	targetNoteNotFound    = "The target message was not found. Check the ts and the channel."
+	targetNoteUnreadable  = "The target message could not be read (missing history scope, etc.). Running this means acting without having seen its content."
+	targetNoteUnnamedChan = "The channel name could not be resolved (missing channels:read / groups:read scope, etc.). Check that channel_id is the intended destination."
 	// targetNoteSearchTruncated is deliberately not targetNoteNotFound: the ts may be
 	// perfectly valid and the operation may well succeed, so telling the caller to
 	// re-check it would send them after the wrong problem.
-	targetNoteSearchTruncated = "対象メッセージの検索を打ち切りました（非常に長いスレッド内の返信の可能性があります）。ts が正しくても内容を表示できないことがあるため、内容を確認せずに実行することになります。"
+	targetNoteSearchTruncated = "The search for the target message was cut short (it may be a reply in a very long thread). Its content may not be shown even when the ts is correct, so running this means acting without having seen its content."
 )
 
 // resolvedTarget describes the message an update or delete would act on.

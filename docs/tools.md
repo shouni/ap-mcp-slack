@@ -1,292 +1,292 @@
-# ツールリファレンス (Tools Reference)
+# Tools Reference
 
-`ap-mcp-slack` が提供する各MCPツールの入力フィールド・OAuthスコープの詳細です。ツール一覧・導入手順・ビルド方法は [README.md](../README.md) を参照してください。
+Input fields and OAuth scopes for each MCP tool that `ap-mcp-slack` provides. For the tool list, setup and build instructions, see [README.md](../README.md).
 
-## ツールの登録条件
+## When tools are registered
 
-ツールは、対応するトランスポートの認証情報が設定されている場合にのみ登録されます。
+A tool is registered only when the credentials for its transport are configured.
 
-| 設定 | 登録されるツール |
+| Configuration | Registered tools |
 | --- | --- |
-| `MCP_SLACK_WEBHOOK_URL` のみ | `post_slack_message` |
-| トークンのみ（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`） | Web API 系の全ツール |
-| 両方 | すべて |
-| どちらも未設定 | 起動時にエラー終了します |
+| `MCP_SLACK_WEBHOOK_URL` only | `post_slack_message` |
+| Token only (`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`) | Every Web API tool |
+| Both | All |
+| Neither | The server exits with an error at startup |
 
-唯一の例外は `search_slack_messages` です。`search.messages` はユーザートークンでしか呼べませんが、トークン種別は文字列からは確実に判別できないため、Web API 系の他のツールと同じ条件で登録し、Botトークンの場合は Slack の `not_allowed_token_type` をそのまま返します。
+The one exception is `search_slack_messages`. `search.messages` can only be called with a user token, but the token type cannot be reliably told from the string, so it is registered under the same condition as the other Web API tools, and with a bot token Slack's `not_allowed_token_type` is returned as is.
 
-これは、MCPクライアント側のモデルが「提示されたツール一覧」から選択するためです。認証情報のないトランスポートのツールを一覧に載せると、モデルがそれを選び、payloadを組み立て、人間にプレビューを承認させたうえで送信時に初めて失敗する、という最悪の順序になります。使えないツールは最初から見せません。
+This is because the model on the MCP client side chooses from "the list of tools it was shown". Listing a tool whose transport has no credentials leads to the worst possible order: the model picks it, builds a payload, has a human approve the preview, and only then fails on send. Tools that cannot work are never shown in the first place.
 
-## プレビューは `confirm` の既定動作です
+## Previewing is what `confirm` does by default
 
-Slackを変更するツール（`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`）はすべて、`confirm` を省略/`false` にすると**Slackに一切書き込まず**、実際に送信される payload をプレビューとして返します。
+Every tool that changes Slack (`post_slack_message` / `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message`) **writes nothing to Slack** when `confirm` is omitted or `false`, and returns the payload that would actually be sent as a preview.
 
-`preview_*` という独立したツールは意図的に用意していません。同じ payload に到達する経路が2つあると、モデルがどちらを選ぶかに安全性が依存してしまいます。プレビューは「モデルがすでに選んだツールの既定の動作」であり、別に呼び出しておくべき前段の手順ではありません。
+There is deliberately no separate `preview_*` tool. With two routes to the same payload, safety would depend on which one the model picks. The preview is "the default behaviour of the tool the model already chose", not a preliminary step that has to be called separately.
 
 ## `post_slack_message`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `text` | 必須 | Slackに投稿する本文。デフォルトでSlackのmrkdwnとして解釈されます。 |
-| `blocks` | 任意 | 任意のSlack Block Kit blocks配列。指定する場合もアクセシビリティ用にtextを含めてください。 |
-| `attachments` | 任意 | Slack attachments 配列。 |
-| `thread_ts` | 任意 | スレッド返信にする場合の親メッセージts。Webhook側で利用可能な場合のみ有効です。 |
-| `icon_emoji` | 任意 | 投稿者アイコンとして使うSlack絵文字名。例: `:robot_face:` |
-| `unfurl_links` | 任意 | リンク展開の制御。 |
-| `unfurl_media` | 任意 | メディア展開の制御。 |
-| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。 |
-| `confirm` | 任意 | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、プレビューのみ返します。 |
+| `text` | Required | The message body to post to Slack. Interpreted as Slack mrkdwn by default. |
+| `blocks` | Optional | An optional Slack Block Kit blocks array. Include `text` for accessibility even when specifying it. |
+| `attachments` | Optional | A Slack attachments array. |
+| `thread_ts` | Optional | The parent message ts when replying in a thread. Effective only when the webhook supports it. |
+| `icon_emoji` | Optional | The Slack emoji name to use as the poster's icon. Example: `:robot_face:` |
+| `unfurl_links` | Optional | Controls link unfurling. |
+| `unfurl_media` | Optional | Controls media unfurling. |
+| `mentions` | Optional | An array of Slack user IDs to mention (e.g. `["U0123456"]`). Prepended to the body as `<@ID>`. Combining it with `blocks` is an error (see below). |
+| `confirm` | Optional | `true` actually posts. When omitted or `false`, nothing is posted and only a preview is returned. |
 
 ## `post_slack_message_as_user`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `text` | 必須 | Slackに投稿する本文。デフォルトでSlackのmrkdwnとして解釈されます。 |
-| `channel_id` | 任意 | 投稿先チャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `blocks` | 任意 | 任意のSlack Block Kit blocks配列。指定する場合もアクセシビリティ用にtextを含めてください。 |
-| `attachments` | 任意 | Slack attachments 配列。 |
-| `thread_ts` | 任意 | スレッド返信にする場合の親メッセージts。 |
-| `icon_emoji` | 任意 | 投稿者アイコンとして使うSlack絵文字名。例: `:robot_face:` |
-| `unfurl_links` | 任意 | リンク展開の制御。 |
-| `unfurl_media` | 任意 | メディア展開の制御。 |
-| `mentions` | 任意 | メンション対象のSlackユーザーID配列（例: `["U0123456"]`）。本文の先頭に `<@ID>` 形式で追加されます。`blocks` との併用はエラーになります（後述）。プレビュー時（`confirm`未指定時）はさらに `users.info` で表示名解決した結果を `mentions` フィールド（`id`/`real_name`/`display_name`/`mention` など）として返します。 |
-| `confirm` | 任意 | `true` にすると実際に投稿します。省略/`false` の場合は投稿せず、チャンネル名・メンション先・スレッド元メッセージを解決したプレビューのみ返します。 |
+| `text` | Required | The message body to post to Slack. Interpreted as Slack mrkdwn by default. |
+| `channel_id` | Optional | The channel ID to post to. Defaults to `MCP_SLACK_CHANNEL_ID`. |
+| `blocks` | Optional | An optional Slack Block Kit blocks array. Include `text` for accessibility even when specifying it. |
+| `attachments` | Optional | A Slack attachments array. |
+| `thread_ts` | Optional | The parent message ts when replying in a thread. |
+| `icon_emoji` | Optional | The Slack emoji name to use as the poster's icon. Example: `:robot_face:` |
+| `unfurl_links` | Optional | Controls link unfurling. |
+| `unfurl_media` | Optional | Controls media unfurling. |
+| `mentions` | Optional | An array of Slack user IDs to mention (e.g. `["U0123456"]`). Prepended to the body as `<@ID>`. Combining it with `blocks` is an error (see below). In a preview (when `confirm` is not set), the display names resolved through `users.info` are also returned in the `mentions` field (`id` / `real_name` / `display_name` / `mention` and so on). |
+| `confirm` | Optional | `true` actually posts. When omitted or `false`, nothing is posted and only a preview with the channel name, mentioned users and thread parent message resolved is returned. |
 
-`post_slack_message_as_user` のプレビューは、送信先チャンネル解決のため `channel_id` または `MCP_SLACK_CHANNEL_ID` を必要とします。投稿前に一目で確認できるよう、`payload`（source label 付与後の実送信内容）に加えて次の情報も解決して返します（`conversations.info` / `users.info` / `conversations.replies` を追加で呼び出すため、対応するOAuthスコープが必要です）。
+The `post_slack_message_as_user` preview needs `channel_id` or `MCP_SLACK_CHANNEL_ID` to resolve the destination channel. So that it can be checked at a glance before posting, it resolves and returns the following in addition to `payload` (what is actually sent, after the source label is applied). Since this calls `conversations.info` / `users.info` / `conversations.replies` in addition, the matching OAuth scopes are required.
 
-- `channel_name`: 送信先チャンネルの表示名（`channel_id` を `conversations.info` で解決）
-- `mentions`: `mentions` フィールドで渡した各ユーザーIDの表示名（`users.info` で解決）
-- `thread_parent`: `thread_ts` を指定した場合、返信先となる親メッセージの内容（`conversations.replies` で取得）
+- `channel_name`: the display name of the destination channel (`channel_id` resolved through `conversations.info`)
+- `mentions`: the display name of each user ID passed in the `mentions` field (resolved through `users.info`)
+- `thread_parent`: when `thread_ts` is given, the content of the parent message being replied to (fetched through `conversations.replies`)
 
-内容を確認した上で同じ入力に `confirm: true` を足して再実行すると、実際に投稿されます（`posted: true` と `ts` が返ります）。`payload` は `confirm` の有無にかかわらず同一で、プレビューで見た payload がそのまま Slack に送られます。
+After checking the content, rerunning the same input with `confirm: true` added actually posts it (`posted: true` and `ts` are returned). `payload` is identical with or without `confirm`, and the payload seen in the preview is exactly what is sent to Slack.
 
-`post_slack_message`（Webhook側）も同様に `confirm` を省略/`false` にすると投稿せず `posted: false` を返しますが、Webhookには宛先チャンネルIDの概念がなく、`conversations.info` なども呼ばないため、`mentions` は表示名解決されない生のSlackユーザーID配列のまま返り、`channel_name` / `thread_parent` は含まれません。
+`post_slack_message` (the webhook side) likewise posts nothing and returns `posted: false` when `confirm` is omitted or `false`, but a webhook has no notion of a destination channel ID and calls nothing like `conversations.info`, so `mentions` comes back as the raw array of Slack user IDs without display names, and `channel_name` / `thread_parent` are not included.
 
-なお `post_slack_message` は `confirm` 未指定（Slackへ何も送らない場合）でも `MCP_SLACK_WEBHOOK_URL` を要求します。プレビューは人間が承認する対象であり、そもそも配送不可能な payload を承認させてしまうと、設定ミスが発覚するのが「承認後」になるためです。
+Note that `post_slack_message` requires `MCP_SLACK_WEBHOOK_URL` even without `confirm` (when nothing is sent to Slack). A preview is what a human approves, and having them approve a payload that cannot be delivered at all would mean a misconfiguration only surfaces "after approval".
 
-### `mentions` と `blocks` の併用について
+### Combining `mentions` with `blocks`
 
-`mentions` と `blocks` を同時に指定するとエラーになります。`mentions` は `text` の先頭に `<@ID>` を挿入しますが、Slackは `blocks` があるとそちらを本文として描画し、`text` は通知フォールバックにしか使いません。つまり併用すると「通知は飛ぶが、メッセージ本文のどこにもメンションが見えない」という状態になります。`blocks` を使う場合は、`blocks` 内の任意の位置に `<@ID>` を自分で書いてください（どこに置くべきかは呼び出し側の判断であり、サーバー側では推測しません）。
+Specifying `mentions` and `blocks` together is an error. `mentions` inserts `<@ID>` at the start of `text`, but when `blocks` is present Slack renders that as the message body and uses `text` only as the notification fallback. Combining them would therefore give "a notification goes out, but the mention is nowhere to be seen in the message body". When using `blocks`, write `<@ID>` yourself wherever you want it inside `blocks` (where it belongs is the caller's decision, and the server does not guess).
 
 ## `update_slack_message`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `ts` | 必須 | 更新対象メッセージのts。`post_slack_message_as_user` の戻り値を利用できます。 |
-| `channel_id` | 任意 | 更新対象のチャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `text` | 任意 | 更新後の本文。`blocks` または `attachments` を指定しない場合は必須です。 |
-| `blocks` | 任意 | 更新後のSlack Block Kit blocks配列。指定すると既存のblocksを置き換えます。 |
-| `attachments` | 任意 | 更新後のSlack attachments配列。指定すると既存のattachmentsを置き換えます。 |
-| `confirm` | 任意 | `true` にすると実際に更新します。省略/`false` の場合は更新せず、プレビューのみ返します。 |
+| `ts` | Required | The ts of the message to update. The return value of `post_slack_message_as_user` can be used. |
+| `channel_id` | Optional | The channel ID of the message to update. Defaults to `MCP_SLACK_CHANNEL_ID`. |
+| `text` | Optional | The new message body. Required unless `blocks` or `attachments` is given. |
+| `blocks` | Optional | The new Slack Block Kit blocks array. Replaces the existing blocks when given. |
+| `attachments` | Optional | The new Slack attachments array. Replaces the existing attachments when given. |
+| `confirm` | Optional | `true` actually updates. When omitted or `false`, nothing is updated and only a preview is returned. |
 
-`update_slack_message` で更新できるのは元の投稿者本人（`MCP_SLACK_USER_TOKEN` なら同じユーザー、Botトークンなら同じBot）が投稿したメッセージのみです。`post_slack_message_as_user` と同様、`text`/`blocks`/`attachments` は既存の内容を丸ごと置き換えます（一部だけの差分更新はできません）。
+`update_slack_message` can only update messages posted by the original poster (the same user for `MCP_SLACK_USER_TOKEN`, the same bot for a bot token). As with `post_slack_message_as_user`, `text` / `blocks` / `attachments` replace the existing content wholesale (a partial, diff-style update is not possible).
 
-投稿系ツールと同じく `confirm` ゲートがあります。`confirm` を省略/`false` にすると更新は行わず、`updated: false` と合わせて次を返します。
+Like the posting tools, it has a `confirm` gate. When `confirm` is omitted or `false`, nothing is updated, and along with `updated: false` it returns:
 
-- `channel_name`: 対象チャンネルの表示名
-- `current`: **更新前の**メッセージ内容（上書きで消える内容）
-- `payload`: 適用しようとしている更新後の payload（source label 付与後、`blocks` / `attachments` を含む実送信内容）
-- `text`: 適用しようとしている更新後の本文
+- `channel_name`: the display name of the target channel
+- `current`: the message content **before** the update (what the overwrite will erase)
+- `payload`: the updated payload about to be applied (what is actually sent, after the source label is applied, including `blocks` / `attachments`)
+- `text`: the updated body about to be applied
 
-`text` だけでは足りないため `payload` も返します。`blocks` のみを指定した更新では `text` は空のままなので、`text` だけを見せると「上書き後の内容が空」に見え、人間が中身を確認せずに承認することになります。
+`payload` is returned too because `text` alone is not enough. In an update that specifies only `blocks`, `text` stays empty, so showing only `text` would make "the content after the overwrite" look empty, and a human would approve without having seen it.
 
 ## `delete_slack_message`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `ts` | 必須 | 削除対象メッセージのts。`post_slack_message_as_user` の戻り値を利用できます。 |
-| `channel_id` | 任意 | 削除対象のチャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `confirm` | 任意 | `true` にすると実際に削除します。省略/`false` の場合は削除せず、プレビューのみ返します。 |
+| `ts` | Required | The ts of the message to delete. The return value of `post_slack_message_as_user` can be used. |
+| `channel_id` | Optional | The channel ID of the message to delete. Defaults to `MCP_SLACK_CHANNEL_ID`. |
+| `confirm` | Optional | `true` actually deletes. When omitted or `false`, nothing is deleted and only a preview is returned. |
 
-削除はこのサーバーが提供する操作の中で最も取り返しがつかない（Slackにundoはありません）ため、投稿系と同じ `confirm` ゲートを持ちます。`confirm` を省略/`false` にすると削除は行わず、`deleted: false` と `channel_name`、そして `target`（削除されるメッセージそのものの内容）を返します。
+Deletion is the least reversible operation this server offers (Slack has no undo), so it has the same `confirm` gate as the posting tools. When `confirm` is omitted or `false`, nothing is deleted, and it returns `deleted: false`, `channel_name`, and `target` (the content of the message that would be deleted).
 
-### 対象が取得できない場合
+### When the target cannot be read
 
-`update_slack_message` / `delete_slack_message` のプレビューは、`conversations.info` でチャンネル名を、`conversations.history`（スレッド返信の場合は `conversations.replies`）で対象メッセージを取得します。しかし `chat.update` / `chat.delete` 自体は履歴スコープも `channels:read` / `groups:read` も必要としません。つまり「消せるが読めない」トークンが正当に存在します。
+The `update_slack_message` / `delete_slack_message` previews fetch the channel name through `conversations.info` and the target message through `conversations.history` (`conversations.replies` for a thread reply). But `chat.update` / `chat.delete` themselves need neither a history scope nor `channels:read` / `groups:read`. In other words, a token that "can delete but cannot read" legitimately exists.
 
-そのためどちらの解決に失敗しても操作はブロックされず、解決できなかった項目を省略したうえで `current_note` / `target_note` に理由を入れて返します。
+So a failure to resolve either one does not block the operation; the unresolved item is omitted and the reason is put in `current_note` / `target_note`.
 
-| 状況 | 挙動 |
+| Situation | Behaviour |
 | --- | --- |
-| メッセージを読めない（履歴スコープ不足など） | `current` / `target` を省略し、note に理由を記載 |
-| 対象がスレッド内の返信で、先頭から1000件以内に到達できない | `current` / `target` を省略し、note に「検索を打ち切った」旨を記載（**「見つからない」とは区別されます**。ts は正しく、実行すれば成功する可能性があります） |
-| チャンネル名を解決できない（`channels:read` / `groups:read` 不足など） | `channel_name` を省略し、`channel_id`（省略時は `MCP_SLACK_CHANNEL_ID` の値）はそのまま返して note に理由を記載 |
-| `channel_id` 未指定かつ `MCP_SLACK_CHANNEL_ID` 未設定 | エラー（宛先が特定できず、操作対象が存在しない） |
+| The message cannot be read (missing history scope, etc.) | `current` / `target` is omitted and the note states the reason |
+| The target is a thread reply that cannot be reached within the first 1000 replies | `current` / `target` is omitted and the note says the search was cut short (**this is distinct from "not found"**: the ts may be correct and running it may succeed) |
+| The channel name cannot be resolved (missing `channels:read` / `groups:read`, etc.) | `channel_name` is omitted, `channel_id` (or the value of `MCP_SLACK_CHANNEL_ID` when omitted) is returned as is, and the note states the reason |
+| `channel_id` is not given and `MCP_SLACK_CHANNEL_ID` is not set | Error (no destination can be determined, so there is nothing to operate on) |
 
-宛先の有無は設定から判定するため、`channel_id` を省略して `MCP_SLACK_CHANNEL_ID` に頼る場合も、`conversations.info` が失敗しても操作はブロックされません。
+Whether there is a destination is decided from the configuration, so even when `channel_id` is omitted in favour of `MCP_SLACK_CHANNEL_ID`, a failing `conversations.info` does not block the operation.
 
-note が入っている場合は**内容を確認しないまま実行することになる**というシグナルなので、承認前に必ず確認してください。ここでエラーにしてしまうと、そのメッセージを削除する手段がこのサーバーから一切失われるため、あえて降格して人間に判断を委ねています。
+A note is the signal that **you are about to run this without having seen the content**, so always check it before approving. Making this an error would leave this server with no way at all to delete that message, so it is deliberately downgraded and the decision is left to a human.
 
-対象の特定は ts の完全一致で行います。`conversations.history` はトップレベルのメッセージしか返さないため、スレッド返信の ts を渡すと Slack は「その ts 以前で最も新しいトップレベルメッセージ」を返してきます。それを削除確認画面に出すと全く別のメッセージを見せることになるので、ts が一致しない場合は `conversations.replies` にフォールバックしてスレッド内を走査します。
+The target is identified by an exact ts match. `conversations.history` returns only top-level messages, so given a thread reply's ts, Slack returns "the newest top-level message at or before that ts". Showing that on the delete confirmation would show a completely different message, so when the ts does not match, it falls back to `conversations.replies` and walks the thread.
 
-`conversations.replies` は、スレッド内のどの ts を渡してもスレッドの**先頭から**返すため、走査はカーソルを追って行います（1ページ100件 × 最大10ページ = 1000件）。1ページだけ読む実装だと、返信が101件目以降にある場合に「見つからない」と報告してしまい、実際には成功する削除の直前に「ts を確認してください」と誤った指示を出すことになります。
+`conversations.replies` returns the thread **from its start** whichever ts in the thread is passed, so the walk follows the cursor (100 per page × at most 10 pages = 1000). An implementation that read only one page would report "not found" when the reply is the 101st or later, giving the wrong instruction "check the ts" right before a delete that would actually succeed.
 
 ## `list_slack_channels`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `types` | 任意 | 取得する会話種別。`public_channel`, `private_channel`, `mpim`, `im` を指定できます。省略時は Slack API のデフォルト `public_channel` です。 |
-| `exclude_archived` | 任意 | `true` の場合、アーカイブ済みチャンネルを除外します。 |
-| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります（後述）。 |
-| `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
-| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
-| `sort` | 任意 | 取得した結果に適用する返却前の並び順。`none`, `name_asc`, `name_desc`, `created_asc`, `created_desc` を指定できます。省略時は `name_asc` です。 |
+| `types` | Optional | The conversation types to fetch. Accepts `public_channel`, `private_channel`, `mpim`, `im`. Defaults to the Slack API default, `public_channel`. |
+| `exclude_archived` | Optional | When `true`, archived channels are excluded. |
+| `limit` | Optional | The maximum number of items. Defaults to `200`, at most `1000`. Because of the remainder of what Slack returns in one page, the number returned can slightly exceed it (see below). |
+| `cursor` | Optional | The Slack pagination cursor to continue from. |
+| `team_id` | Optional | Used to name the target workspace with an Enterprise Grid org-level token. |
+| `sort` | Optional | The order applied to the fetched results before returning them. Accepts `none`, `name_asc`, `name_desc`, `created_asc`, `created_desc`. Defaults to `name_asc`. |
 
-Slack API の `conversations.list` には並び順を指定する引数がないため、`sort` はMCPサーバーが取得した結果にローカルで適用します。
+The Slack API's `conversations.list` has no argument for ordering, so `sort` is applied locally by the MCP server to the fetched results.
 
-`list_slack_channels` で `private_channel` を含めて取得するには、トークンに `groups:read` スコープが必要です（`public_channel` のみなら `channels:read` で足ります）。
+To include `private_channel` in `list_slack_channels`, the token needs the `groups:read` scope (`channels:read` is enough for `public_channel` only).
 
 ## `list_joined_slack_channels`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `types` | 任意 | 取得する会話種別。`public_channel`, `private_channel`, `mpim`, `im` を指定できます。省略時は Slack API のデフォルト `public_channel` です。 |
-| `exclude_archived` | 任意 | `true` の場合、アーカイブ済みチャンネルを除外します。 |
-| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります（後述）。 |
-| `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
-| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
-| `sort` | 任意 | 取得した結果に適用する返却前の並び順。`none`, `name_asc`, `name_desc`, `created_asc`, `created_desc` を指定できます。省略時は `name_asc` です。 |
+| `types` | Optional | The conversation types to fetch. Accepts `public_channel`, `private_channel`, `mpim`, `im`. Defaults to the Slack API default, `public_channel`. |
+| `exclude_archived` | Optional | When `true`, archived channels are excluded. |
+| `limit` | Optional | The maximum number of items. Defaults to `200`, at most `1000`. Because of the remainder of what Slack returns in one page, the number returned can slightly exceed it (see below). |
+| `cursor` | Optional | The Slack pagination cursor to continue from. |
+| `team_id` | Optional | Used to name the target workspace with an Enterprise Grid org-level token. |
+| `sort` | Optional | The order applied to the fetched results before returning them. Accepts `none`, `name_asc`, `name_desc`, `created_asc`, `created_desc`. Defaults to `name_asc`. |
 
-`list_slack_channels` がワークスペース全体を返すのに対し、`list_joined_slack_channels` は `users.conversations` を使うため、サーバー側でトークン所有者のメンバーシップに絞り込まれた結果のみが返ります。`MCP_SLACK_USER_TOKEN`（ユーザートークン）を設定していればそのユーザー本人が参加しているチャンネル、ボットトークンのみの場合はそのボットが参加しているチャンネルが対象です。入力フィールドは `list_slack_channels` と同一です。
+Whereas `list_slack_channels` returns the whole workspace, `list_joined_slack_channels` uses `users.conversations`, so only results narrowed server-side to the token owner's memberships come back. With `MCP_SLACK_USER_TOKEN` (a user token) set, these are the channels that user has joined; with only a bot token, the channels the bot has joined. Its input fields are the same as `list_slack_channels`.
 
-### `limit` と `next_cursor` の関係
+### How `limit` relates to `next_cursor`
 
-`limit` に達するまで Slack のページを順に辿り、`next_cursor` には続きから取得するためのカーソルを返します。このとき、Slackが1ページで返してきた項目は `limit` を超えても**すべて返します**（`limit` はページ単位の残数に丸めて要求するため、超過分はごく僅かです）。
+Slack's pages are followed in order until `limit` is reached, and `next_cursor` returns the cursor to continue from. Here, the items Slack returned in a page are **all returned** even past `limit` (`limit` is requested rounded to the remainder per page, so the excess is very small).
 
-Slackのカーソルは「そのページ全体の後ろ」を指すため、ページの途中で打ち切って残りを捨てると、返した `next_cursor` でその捨てた項目を飛び越してしまい、以降どうページングしても取得できなくなります。`limit` を厳密に守るより取りこぼさないほうを優先しています。同じ理由で `list_slack_users` も同様に振る舞います。
+Slack's cursor points "after that whole page", so cutting a page off midway and discarding the rest would make the returned `next_cursor` skip over the discarded items, leaving them unreachable however you page afterwards. Not dropping anything takes priority over honouring `limit` exactly. `list_slack_users` behaves the same way for the same reason.
 
-また、1回のツール呼び出しで発行するリクエストは**20ページまで**です。`list_slack_users` に一致件数の少ない `query` を渡した場合など、`limit` に到達しないままワークスペース全体を辿ってしまうのを防ぐためです（リクエストごとのタイムアウトはリクエスト**数**を制限しません）。上限に達した場合もエラーにはならず、通常どおり `next_cursor` を返すので、続けたい場合はそれを渡して再度呼び出してください。
+Also, one tool call issues requests for **at most 20 pages**. This prevents walking the whole workspace without ever reaching `limit`, as when `list_slack_users` is given a `query` that matches few users (the per-request timeout does not limit the **number** of requests). Reaching the cap is not an error either: `next_cursor` is returned as usual, so pass it in another call to continue.
 
-ページ走査の途中で Slack のレートリミット（HTTP 429）に当たった場合も同様に、取得済みのページは捨てずにそのまま返します。このとき `next_cursor` は**拒否されたページ**を指すため取りこぼしは発生せず、応答の `retry_after_seconds` に Slack が要求した待機秒数が入ります。続きが必要な場合はその秒数待ってから `next_cursor` を渡してください。エラーにして取得済みページを捨てると、再試行が直前に使い切ったリクエスト予算をもう一度消費し直すだけになるためです。最初のページでレートリミットに当たった場合のみ、返せる結果が無いためエラーになります（メッセージに Slack の retry after が含まれます）。
+Likewise, when a Slack rate limit (HTTP 429) is hit midway through the page walk, the pages already fetched are returned rather than discarded. `next_cursor` then points to **the refused page**, so nothing is skipped, and the response's `retry_after_seconds` holds the wait Slack asked for. If you need more, wait that many seconds and pass `next_cursor`. Failing with an error and discarding the fetched pages would only make the retry spend again the request budget that was just used up. Only a rate limit on the first page is an error, since there is no result to hand back (the message includes Slack's retry after).
 
 ## `get_slack_channel_info`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `channel_id` | 任意 | 取得対象チャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `include_num_members` | 任意 | `true` の場合、`num_members` を含めて取得します。 |
-| `include_locale` | 任意 | `true` の場合、ロケール情報を含めて取得します。 |
+| `channel_id` | Optional | The channel ID to fetch. Defaults to `MCP_SLACK_CHANNEL_ID`. |
+| `include_num_members` | Optional | When `true`, `num_members` is included. |
+| `include_locale` | Optional | When `true`, locale information is included. |
 
-`list_slack_channels` / `list_joined_slack_channels` がチャンネル一覧を返すのに対し、`get_slack_channel_info` はチャンネルIDが分かっている場合に、ワークスペース全体をページングせず単一チャンネルの詳細だけを取得できます。
+Whereas `list_slack_channels` / `list_joined_slack_channels` return a list of channels, `get_slack_channel_info` fetches just one channel's details when its ID is known, without paging through the whole workspace.
 
 ## `get_slack_channel_history` / `get_slack_thread_replies`
 
-`get_slack_channel_history` の主な入力:
+Main inputs of `get_slack_channel_history`:
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `channel_id` | 任意 | 取得対象チャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `limit` | 任意 | 最大取得件数。省略時は `100`、最大 `1000` です。 |
-| `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
-| `oldest` | 任意 | このUnix timestampより後のメッセージのみ取得します。 |
-| `latest` | 任意 | このUnix timestampより前のメッセージのみ取得します。 |
-| `inclusive` | 任意 | `oldest` / `latest` と同じtimestampのメッセージも含めます。 |
-| `include_all_metadata` | 任意 | `true` の場合、Slackのメッセージメタデータも取得対象にします。 |
-| `include_raw_blocks` | 任意 | `true` の場合、Block Kit blocksとattachmentsの生データも取得対象にします。省略時はテキストとして要約されたものだけを返し、トークン消費を抑えます。 |
+| `channel_id` | Optional | The channel ID to fetch. Defaults to `MCP_SLACK_CHANNEL_ID`. |
+| `limit` | Optional | The maximum number of items. Defaults to `100`, at most `1000`. |
+| `cursor` | Optional | The Slack pagination cursor to continue from. |
+| `oldest` | Optional | Fetch only messages after this Unix timestamp. |
+| `latest` | Optional | Fetch only messages before this Unix timestamp. |
+| `inclusive` | Optional | Also include messages with the same timestamp as `oldest` / `latest`. |
+| `include_all_metadata` | Optional | When `true`, Slack message metadata is fetched too. |
+| `include_raw_blocks` | Optional | When `true`, the raw Block Kit blocks and attachments are fetched too. By default only the text summary is returned, which keeps token use down. |
 
-`get_slack_thread_replies` の主な入力:
+Main inputs of `get_slack_thread_replies`:
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `ts` | 必須 | 親メッセージのts。返信メッセージのtsではなくスレッド親のtsを指定してください。 |
-| `channel_id` | 任意 | 取得対象チャンネルID。省略時は `MCP_SLACK_CHANNEL_ID` を利用します。 |
-| `limit` | 任意 | 最大取得件数。省略時は `100`、最大 `1000` です。 |
-| `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
-| `oldest` | 任意 | このUnix timestampより後の返信のみ取得します。 |
-| `latest` | 任意 | このUnix timestampより前の返信のみ取得します。 |
-| `inclusive` | 任意 | `oldest` / `latest` と同じtimestampの返信も含めます。 |
-| `include_all_metadata` | 任意 | `true` の場合、Slackのメッセージメタデータも取得対象にします。 |
-| `include_raw_blocks` | 任意 | `true` の場合、Block Kit blocksとattachmentsの生データも取得対象にします。省略時はテキストとして要約されたものだけを返し、トークン消費を抑えます。 |
+| `ts` | Required | The parent message ts. Give the ts of the thread parent, not of a reply. |
+| `channel_id` | Optional | The channel ID to fetch. Defaults to `MCP_SLACK_CHANNEL_ID`. |
+| `limit` | Optional | The maximum number of items. Defaults to `100`, at most `1000`. |
+| `cursor` | Optional | The Slack pagination cursor to continue from. |
+| `oldest` | Optional | Fetch only replies after this Unix timestamp. |
+| `latest` | Optional | Fetch only replies before this Unix timestamp. |
+| `inclusive` | Optional | Also include replies with the same timestamp as `oldest` / `latest`. |
+| `include_all_metadata` | Optional | When `true`, Slack message metadata is fetched too. |
+| `include_raw_blocks` | Optional | When `true`, the raw Block Kit blocks and attachments are fetched too. By default only the text summary is returned, which keeps token use down. |
 
-`get_slack_channel_history` / `get_slack_thread_replies` は、public channel には `channels:history`、private channel には `groups:history` スコープが必要です。Botトークンで読む場合、対象チャンネルにbotが参加している必要があります。
+`get_slack_channel_history` / `get_slack_thread_replies` need the `channels:history` scope for public channels and `groups:history` for private channels. When reading with a bot token, the bot must be a member of the target channel.
 
 ## `search_slack_messages`
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `query` | 必須 | 検索クエリ。Slackの検索構文がそのまま使えます（後述）。 |
-| `limit` | 任意 | 1ページあたりの最大取得件数。省略時は `20`、最大 `100` です。 |
-| `page` | 任意 | 取得するページ番号（1始まり）。省略時は `1`、最大 `100` です。 |
-| `sort` | 任意 | 並び替えの基準。`score`（関連度）または `timestamp`（投稿日時）。省略時は `score`。 |
-| `sort_dir` | 任意 | 並び順。`asc` または `desc`。省略時は `desc`。 |
-| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
-| `include_raw_blocks` | 任意 | `true` の場合、Block Kit blocksとattachmentsの生データも返します。省略時はテキストとして要約されたものだけを返し、トークン消費を抑えます。 |
+| `query` | Required | The search query. Slack's search syntax works as is (see below). |
+| `limit` | Optional | The maximum number of items per page. Defaults to `20`, at most `100`. |
+| `page` | Optional | The page number to fetch (1-based). Defaults to `1`, at most `100`. |
+| `sort` | Optional | The sort key: `score` (relevance) or `timestamp` (posting time). Defaults to `score`. |
+| `sort_dir` | Optional | The sort direction: `asc` or `desc`. Defaults to `desc`. |
+| `team_id` | Optional | Used to name the target workspace with an Enterprise Grid org-level token. |
+| `include_raw_blocks` | Optional | When `true`, the raw Block Kit blocks and attachments are returned too. By default only the text summary is returned, which keeps token use down. |
 
-`get_slack_channel_history` がチャンネル1つの時系列を読むのに対し、こちらはチャンネルを指定せずワークスペース全体をSlackの検索インデックスで横断検索します。チャンネル一覧を取ってそれぞれの履歴を読んで回る方法では、「一覧に載ったチャンネルの、ページングした範囲」しか見ていないため、見つからないことが「ワークスペースに無い」ことの根拠になりません。横断検索が必要な場合はこのツールを使ってください。
+Whereas `get_slack_channel_history` reads one channel's timeline, this searches the whole workspace through Slack's search index without naming a channel. Listing channels and reading each one's history only covers "the paged range of the channels that were listed", so not finding something that way is no evidence that "it is not in the workspace". Use this tool when you need a workspace-wide search.
 
-### クエリ構文
+### Query syntax
 
-Slackの検索修飾子がそのまま使えます。絞り込みは検索語を増やすより修飾子で行うほうが精度が上がります。
+Slack's search modifiers work as is. Narrowing with modifiers is more precise than adding search terms.
 
-| 例 | 意味 |
+| Example | Meaning |
 | --- | --- |
-| `in:#general` | 指定チャンネル内に限定 |
-| `from:@alice` | 指定ユーザーの投稿に限定 |
-| `before:2026-01-31` / `after:2026-01-01` / `on:2026-01-15` | 日付で限定 |
-| `has:link` / `has:reaction` | リンク・リアクションを含む投稿に限定 |
-| `"完全一致フレーズ"` | フレーズ全体の一致 |
+| `in:#general` | Limit to the given channel |
+| `from:@alice` | Limit to posts by the given user |
+| `before:2026-01-31` / `after:2026-01-01` / `on:2026-01-15` | Limit by date |
+| `has:link` / `has:reaction` | Limit to posts with a link or reaction |
+| `"exact phrase"` | Match the whole phrase |
 
-### ページングと返却フィールド
+### Paging and returned fields
 
-カーソルではなくページ番号でのページングです。1回の呼び出しにつき `search.messages` を1回だけ呼び、続きが必要なら応答の `next_page` を次の `page` に渡してください。他の一覧系ツールのようにサーバー側で複数ページを自動で辿ることはしません。結果は関連度順に並んでいるため、後ろのページほど一致が弱くなる（＝呼び出し側が明示的に要求すべきもの）からです。
+Paging is by page number, not by cursor. Each call makes exactly one `search.messages` call; to continue, pass the response's `next_page` as the next `page`. Unlike the other listing tools, the server does not walk multiple pages for you. The results are ordered by relevance, so later pages match more weakly (and are therefore something the caller should ask for explicitly).
 
-| フィールド | 説明 |
+| Field | Description |
 | --- | --- |
-| `matches` | ヒットしたメッセージ。`channel_id` / `channel_name` / `is_private` / `user` / `ts` / `text` / `permalink` を含みます。 |
-| `matches[].thread_ts` | ヒットがスレッド返信だった場合の**親メッセージのts**。`get_slack_thread_replies` にそのまま渡せます。Slackの検索結果自体はthread_tsを返さないため、permalinkから復元しています（トップレベル投稿では空です）。 |
-| `total` | ワークスペース全体でのヒット総数。`count`（このページの件数）より通常はるかに大きく、「見ているのが答えそのものか、その一部か」を判断する材料になります。 |
-| `page` / `page_count` / `has_more` / `next_page` | ページ位置と続きの有無。 |
+| `matches` | The matched messages. Includes `channel_id` / `channel_name` / `is_private` / `user` / `ts` / `text` / `permalink`. |
+| `matches[].thread_ts` | When a match is a thread reply, the **parent message's ts**. Can be passed to `get_slack_thread_replies` as is. Slack's search results do not return thread_ts themselves, so it is recovered from the permalink (empty for top-level posts). |
+| `total` | The total number of matches across the workspace. Usually far larger than `count` (the number on this page), which helps judge "whether what you are looking at is the answer itself or only part of it". |
+| `page` / `page_count` / `has_more` / `next_page` | The page position and whether there is more. |
 
-このツールは**ユーザートークン + `search:read`** でのみ利用できます。Botトークンでは Slack 側が `not_allowed_token_type` を返します（空の検索結果ではなくエラーとして返します。「検索が許可されていない」を「1件も無い」として返さないためです）。
+This tool can only be used with **a user token + `search:read`**. With a bot token Slack returns `not_allowed_token_type` (it is returned as an error rather than an empty result, so that "search is not allowed" is never reported as "nothing found").
 
 ## `list_slack_users` / `lookup_slack_user_by_email` / `resolve_slack_user`
 
-`list_slack_users` の主な入力:
+Main inputs of `list_slack_users`:
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `query` | 任意 | `name` / `real_name` / `profile.display_name` / `email` に対する部分一致検索（大文字小文字を区別しません）。 |
-| `limit` | 任意 | 最大取得件数。省略時は `200`、最大 `1000` です。Slackが1ページで返す件数の端数により、返却件数がこれを僅かに超えることがあります（後述）。 |
-| `cursor` | 任意 | 続きから取得する場合の Slack pagination cursor。 |
-| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。 |
-| `include_deleted` | 任意 | `true` の場合、deactivate済み(deleted)ユーザーも含めます。省略時は除外されます。 |
+| `query` | Optional | A case-insensitive substring search over `name` / `real_name` / `profile.display_name` / `email`. |
+| `limit` | Optional | The maximum number of items. Defaults to `200`, at most `1000`. Because of the remainder of what Slack returns in one page, the number returned can slightly exceed it (see above). |
+| `cursor` | Optional | The Slack pagination cursor to continue from. |
+| `team_id` | Optional | Used to name the target workspace with an Enterprise Grid org-level token. |
+| `include_deleted` | Optional | When `true`, deactivated (deleted) users are included too. Excluded by default. |
 
-`lookup_slack_user_by_email` の主な入力:
+Main inputs of `lookup_slack_user_by_email`:
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `email` | 必須 | 検索対象のメールアドレス。 |
+| `email` | Required | The email address to look up. |
 
-`resolve_slack_user` の主な入力:
+Main inputs of `resolve_slack_user`:
 
-| フィールド | 必須 | 説明 |
+| Field | Required | Description |
 | --- | :---: | --- |
-| `name` | 任意 | 検索対象のユーザー名・real name・display nameのいずれか。`email` が指定された場合は無視されます。 |
-| `email` | 任意 | 検索対象のメールアドレス。指定された場合は `name` より優先され、`users.lookupByEmail` で解決します。 |
-| `team_id` | 任意 | Enterprise Grid の org-level token で対象ワークスペースを指定する場合に使います。`name` での検索時のみ利用します。 |
+| `name` | Optional | The user name, real name or display name to look up. Ignored when `email` is given. |
+| `email` | Optional | The email address to look up. Takes precedence over `name` when given, and is resolved through `users.lookupByEmail`. |
+| `team_id` | Optional | Used to name the target workspace with an Enterprise Grid org-level token. Used only when searching by `name`. |
 
-`email` が指定されない場合、`name` はまず `users.list` から取得したユーザーの `name` / `real_name` / `display_name` との完全一致（大文字小文字を区別しない）を探します。完全一致が1件もない場合は部分一致にフォールバックします。一致が1件のときのみ `status: "found"` として `user` と `<@U...>` 形式の `mention` を返します。0件なら `status: "not_found"`、複数件なら `status: "ambiguous"` として `candidates` に候補一覧を返し、誤送信を避けるため自動選択はしません。
+When `email` is not given, `name` is first matched exactly (case-insensitively) against the `name` / `real_name` / `display_name` of the users fetched from `users.list`. If there is no exact match, it falls back to a substring match. Only when exactly one user matches does it return `status: "found"` with `user` and a `mention` in `<@U...>` form. With no match it returns `status: "not_found"`; with several, `status: "ambiguous"` with the candidates in `candidates`, and it never picks one automatically, to avoid sending to the wrong person.
 
-`name` 検索は 4000 人（1ページ200件 × 20ページ）までを走査して打ち切ります。打ち切りに達した場合は `search_truncated: true` が付きます。これは「ワークスペースにいない」と「探しきれなかった」を区別するためのフラグで、`true` のときの `not_found` は **走査した範囲にいなかった** という意味しかありません。走査の途中で Slack のレートリミットに当たった場合も同じ扱いで、エラーにはならず `search_truncated: true` が付きます。より広く探す必要がある場合は `list_slack_users` に `query` を渡して自分でページングしてください。
+A `name` search scans up to 4000 users (200 per page × 20 pages) and then stops. When it hits that cap, `search_truncated: true` is set. This flag separates "not in the workspace" from "could not finish looking": with `true`, `not_found` only means **not within the scanned range**. A Slack rate limit midway through the scan is treated the same way: it is not an error, and `search_truncated: true` is set. If you need to search more widely, pass a `query` to `list_slack_users` and page through it yourself.
 
-なお完全一致で1件に決まった場合は、走査を打ち切っていても `search_truncated` は付きません（未走査のメンバーがこれより良い一致になることはないため）。部分一致で1件だけ当たった場合は、打ち切られていれば `search_truncated: true` が付きます。
+Note that when an exact match settles it to one user, `search_truncated` is not set even if the scan was cut short (no unscanned member could be a better match). When a substring match hits exactly one user, `search_truncated: true` is set if the scan was cut short.
 
 ## `get_slack_auth_info`
 
-入力フィールドを取りません。設定されたトークン（`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`）が実際にどの Slack ワークスペース・ユーザー・Botとして認証されるかを、`team` / `user` / `bot_id` などで返します。他のツールと異なり OAuthスコープを一切必要としないため、「トークンは設定したのに他のツールがエラーになる」ときの切り分けに使えます。
+Takes no input fields. Returns which Slack workspace, user and bot the configured token (`MCP_SLACK_USER_TOKEN` / `MCP_SLACK_TOKEN` / `MCP_SLACK_BOT_TOKEN`) actually authenticates as, through `team` / `user` / `bot_id` and so on. Unlike the other tools it needs no OAuth scope at all, so it helps isolate the problem when "the token is set but the other tools fail".
 
-## 必要な Slack トークンスコープ
+## Required Slack token scopes
 
-| スコープ | 用途 |
+| Scope | Used by |
 | --- | --- |
 | `chat:write` | `post_slack_message_as_user` / `update_slack_message` / `delete_slack_message` |
-| `channels:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info`（`public_channel`） / `post_slack_message_as_user` のチャンネル名解決 |
-| `groups:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info` で `private_channel` を含める場合（`post_slack_message_as_user` がprivateチャンネル宛の場合も同様） |
-| `channels:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で public channel を読む場合 |
-| `groups:history` | `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user`（`thread_ts` 指定時の親メッセージ表示）で private channel を読む場合 |
-| `search:read` | `search_slack_messages`。**ユーザートークン専用**で、Botトークンでは `not_allowed_token_type` になります |
-| `users:read` | `list_slack_users` / `resolve_slack_user`（name検索） / `post_slack_message_as_user` の `mentions` 表示名解決 |
-| `users:read.email` | `lookup_slack_user_by_email` / `resolve_slack_user`（email検索） |
-| （不要） | `get_slack_auth_info` はOAuthスコープを問わずトークンの有効性のみ確認します |
+| `channels:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info` (`public_channel`) / channel name resolution in `post_slack_message_as_user` |
+| `groups:read` | `list_slack_channels` / `list_joined_slack_channels` / `get_slack_channel_info` when including `private_channel` (likewise when `post_slack_message_as_user` targets a private channel) |
+| `channels:history` | Reading public channels in `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user` (showing the parent message when `thread_ts` is given) |
+| `groups:history` | Reading private channels in `get_slack_channel_history` / `get_slack_thread_replies` / `post_slack_message_as_user` (showing the parent message when `thread_ts` is given) |
+| `search:read` | `search_slack_messages`. **User tokens only**; a bot token gets `not_allowed_token_type` |
+| `users:read` | `list_slack_users` / `resolve_slack_user` (name search) / display name resolution of `mentions` in `post_slack_message_as_user` |
+| `users:read.email` | `lookup_slack_user_by_email` / `resolve_slack_user` (email search) |
+| (none) | `get_slack_auth_info` checks only that the token is valid, whatever its OAuth scopes |
 
-`update_slack_message` / `delete_slack_message` は `chat:write` のみでも動作します。読み取り系スコープは対象メッセージやチャンネル名をプレビューに出すためだけに使われ、無い場合はプレビューの該当項目が省略されるだけで操作自体はブロックされません（[対象が取得できない場合](#対象が取得できない場合)を参照）。
+`update_slack_message` / `delete_slack_message` work with `chat:write` alone. The read scopes are used only to show the target message and channel name in the preview; without them the corresponding preview items are simply omitted, and the operation itself is not blocked (see [When the target cannot be read](#when-the-target-cannot-be-read)).
